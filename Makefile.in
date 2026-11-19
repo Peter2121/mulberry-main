@@ -20,6 +20,16 @@ PWD := $(shell pwd)
 include Build/make.version
 include Build/make.local
 
+# Compilers for JX/ACE: by default the ones chosen by configure, so the
+# whole program uses one C++ runtime (used by the FreeBSD JX configuration;
+# the Linux configurations ignore these).
+JX_CC ?= $(firstword @CC@)
+JX_CXX ?= $(firstword @CXX@)
+export JX_CC JX_CXX
+
+# Unicode CLDR data used to generate the emoji text table
+CLDR_DIR ?= /usr/share/unicode/cldr
+
 all: timezones emoji-table
 	(cd Linux; ./links.sh)
 	$(MAKE) -C Libraries $@
@@ -28,12 +38,12 @@ all: timezones emoji-table
 
 emoji-table:
 	@if [ ! -f Sources_Common/i18n/Charsets/CEmojiTable.h ]; then \
-		if [ -f /usr/share/unicode/cldr/common/annotations/en.xml ]; then \
+		if [ -f $(CLDR_DIR)/common/annotations/en.xml ]; then \
 			echo "Generating emoji text substitution table..."; \
 			python3 scripts/generate-emoji-table.py \
 				Sources_Common/i18n/Charsets/CEmojiTable.h \
-				/usr/share/unicode/cldr/common/annotations/en.xml \
-				/usr/share/unicode/cldr/common/annotationsDerived/en.xml; \
+				$(CLDR_DIR)/common/annotations/en.xml \
+				$(CLDR_DIR)/common/annotationsDerived/en.xml; \
 		else \
 			echo "CLDR annotations not found, generating empty emoji table"; \
 			printf '#ifndef __CEMOJITABLE__MULBERRY__\n#define __CEMOJITABLE__MULBERRY__\n#include <stdint.h>\n#include <stddef.h>\nstruct SEmojiEntry { const uint32_t* codepoints; uint8_t length; const char* name; };\nstatic const SEmojiEntry cEmojiTable[] = { { NULL, 0, NULL } };\nstatic const size_t cEmojiTableSize = 0;\n#endif\n' \

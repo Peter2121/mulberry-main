@@ -56,7 +56,22 @@ case "$host_os" in
         ;;
     esac
     ;;
-  bsd4.4*|netbsd*|freebsd*)
+  freebsd*)
+    case $host_cpu in
+      x86_64|amd64)
+        JX_TARGET="freebsd_amd64"
+        # The JX/ACE FreeBSD configuration is for GCC (see
+        # Libraries/JX/include/make/sys/FreeBSD-amd64-gcc)
+        if ! $CXX -v 2>&1 | grep '^gcc version' >/dev/null; then
+          AC_MSG_ERROR([On FreeBSD Mulberry must be built with GCC from packages, e.g.: CC=gcc14 CXX=g++14 ./configure (or use scripts/build-freebsd.sh)])
+        fi
+        ;;
+      *)
+        AC_MSG_ERROR([FreeBSD on $host_cpu is not supported yet (only amd64 has a JX configuration)])
+        ;;
+    esac
+    ;;
+  bsd4.4*|netbsd*)
     JX_TARGET="freebsd3_x"
     ;;
   SunOS|Solaris|solaris*)
@@ -257,7 +272,9 @@ case $host_os in
      PROC_NAME="`uname -p`"
      ;;
   *)
-     SO_LDFLAGS="-lresolv"
+     # -lresolv is added below only if the library exists
+     # (FreeBSD has the resolver in libc and no libresolv)
+     SO_LDFLAGS=""
      PROC_NAME="`uname -m`"
      ;;
 esac
@@ -266,7 +283,26 @@ REL_NAME="`uname -r`"
 AC_SUBST(OS_NAME)
 AC_SUBST(REL_NAME)
 AC_SUBST(PROC_NAME)
-AC_CHECK_LIB(resolv, main, LDFLAGS="$LDFLAGS -lresolv")
+AC_CHECK_LIB(resolv, main,
+    [LDFLAGS="$LDFLAGS -lresolv"
+     SO_LDFLAGS="$SO_LDFLAGS -lresolv"])
+
+# FreeBSD: JX/ACE are configured for GCC from packages (lang/gccNN), and
+# the whole program must use the same C++ runtime.  GCC keeps its runtime
+# (libstdc++, libgcc_s) in /usr/local/lib/gccNN: record it as rpath so
+# that the base system's /lib/libgcc_s.so.1 is not used at run time.
+case "$host_os" in
+  freebsd*)
+    GCC_RUNTIME_DIR=`$CXX -print-file-name=libstdc++.so 2>/dev/null`
+    case "$GCC_RUNTIME_DIR" in
+      /*)
+        GCC_RUNTIME_DIR=`cd "\`dirname "$GCC_RUNTIME_DIR"\`" && pwd -P`
+        LDFLAGS="$LDFLAGS -Wl,-rpath,$GCC_RUNTIME_DIR"
+        SO_LDFLAGS="$SO_LDFLAGS -Wl,-rpath,$GCC_RUNTIME_DIR"
+        ;;
+    esac
+    ;;
+esac
 
 AC_SUBST(LDFLAGS)
 AC_SUBST(SO_LDFLAGS)

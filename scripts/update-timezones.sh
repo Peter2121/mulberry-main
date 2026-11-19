@@ -1,13 +1,14 @@
-#!/bin/bash
+#!/bin/sh
 # Update Mulberry timezone database using vzic
-# Uses system tzdata to generate iCalendar VTIMEZONE .ics files
+# Uses IANA tzdata to generate iCalendar VTIMEZONE .ics files
 #
 # This script is called during debian package build (debian/rules)
 # and can also be run manually for timezone updates.
+# POSIX sh: also runs on FreeBSD without bash.
 
 set -e  # Exit on error
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 VZIC_SOURCE_DIR="$PROJECT_ROOT/Libraries/vzic"
 VZIC_BUILD_DIR="$PROJECT_ROOT/Libraries/vzic/build"
@@ -18,11 +19,18 @@ echo "Project root: $PROJECT_ROOT"
 echo "vzic source: $VZIC_SOURCE_DIR"
 echo "Output directory: $OUTPUT_DIR"
 
+# vzic's Makefile needs GNU make, which is "gmake" on the BSDs
+if command -v gmake >/dev/null 2>&1; then
+    GNU_MAKE=gmake
+else
+    GNU_MAKE=make
+fi
+
 # Check for required commands
-for cmd in make pkg-config curl; do
+for cmd in $GNU_MAKE pkg-config curl; do
     if ! command -v $cmd >/dev/null 2>&1; then
         echo "ERROR: Required command '$cmd' not found"
-        echo "Install with: sudo apt install $cmd"
+        echo "Install it with your package manager (apt install / pkg install)"
         exit 1
     fi
 done
@@ -69,11 +77,11 @@ fi
 echo "Building vzic..."
 cd "$VZIC_SOURCE_DIR"
 
-make clean >/dev/null 2>&1 || true
+$GNU_MAKE clean >/dev/null 2>&1 || true
 # Use empty TZID_PREFIX to generate standard Olson timezone names (e.g. "America/New_York")
 # Use CREATE_SYMLINK=0 so each Link alias (e.g. "Europe/Bratislava") gets its own VTIMEZONE
 # with its own TZID - a symlink to the target zone file only carries the target's TZID
-make TZID_PREFIX="" CREATE_SYMLINK=0 >/dev/null 2>&1
+$GNU_MAKE TZID_PREFIX="" CREATE_SYMLINK=0 >/dev/null 2>&1
 
 if [ ! -f ./vzic ]; then
     echo "ERROR: vzic build failed"

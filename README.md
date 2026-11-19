@@ -87,6 +87,35 @@ make install
 Use `make SKIPJX="yes" install` to skip rebuilding the JX library
 after the initial build.
 
+### FreeBSD (amd64)
+
+Mulberry builds on FreeBSD 11+ with GCC from packages (JX and ACE are
+configured for GCC; GCC 14 is tested) and libraries from packages:
+
+```sh
+pkg install gmake autoconf pkgconf gcc14 curl glib openldap26-client \
+    libsodium libunistring pcre2 libX11 libXext libXpm libXft fontconfig \
+    freetype2 libxml2 aspell brotli zstd
+scripts/build-freebsd.sh build      # as a normal user
+scripts/build-freebsd.sh install    # as root: /usr/local/bin/mulberry
+scripts/build-freebsd.sh uninstall  # as root: removes the installed files
+```
+
+`scripts/build-freebsd.sh -h` lists the options: `-u` for a per-user
+installation (`~/bin/mulberry`, `~/.mulberry`), `-g` to choose another
+GCC version, `-d` to install into a staging directory, `-c` to point to
+Unicode CLDR data for the emoji table (there is no CLDR package; without
+it the table is empty).
+
+Notes:
+
+- The OpenSSL of the base system is used, as by all packaged libraries.
+  Do not install an OpenSSL (or LibreSSL) package: its headers in
+  `/usr/local/include` would shadow the base ones.
+- Building needs network access (timezone data is downloaded from IANA).
+- Without the script: `CC=gcc14 CXX=g++14 ./configure` and `gmake`, with
+  `JX_INSTALL_ROOT` set as in the script.
+
 See `./configure --help` for options (OpenSSL paths, LDAP paths,
 Kerberos, aspell).
 

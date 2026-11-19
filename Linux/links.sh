@@ -25,9 +25,11 @@ all_paths="../Sources/Application \
 	    ../../Libraries/vCard/Source \
 	    ../../Libraries/XMLLib/Source"
 
-# clear out old link directory
+# clear out old link directory (it is not tracked by git, so create it
+# on a fresh clone)
+mkdir -p Includes || exit 1
 \rm -rf Includes/*
-cd Includes
+cd Includes || exit 1
 
 # get list of header files
 

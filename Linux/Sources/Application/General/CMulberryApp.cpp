@@ -182,7 +182,9 @@ CMulberryApp::CMulberryApp(int *argc, char* argv[])
 	// Setup sleep handling
 	//JThisProcess::ShouldCatchSignal(SIGPWR, kTrue);
 	
+#ifdef SIGPWR	// Linux only - FreeBSD has no SIGPWR
 	::signal(SIGPWR, pwr_signal);
+#endif
 }
 
 CMulberryApp::~CMulberryApp()
@@ -416,12 +418,14 @@ void CMulberryApp::ReceiveWithFeedback(JBroadcaster* sender, Message* message)
 	if (sender == JThisProcess::Instance())
 	{
 		JThisProcess::Signal* sig = dynamic_cast<JThisProcess::Signal*>(message);
+#ifdef SIGPWR
 		if (sig && (sig->GetValue() == SIGPWR))
 		{
 			OnPowerSignal(SIGPWR);
 			sig->SetCaught();
 			return;
 		}
+#endif
 	}
 	
 	// Do default

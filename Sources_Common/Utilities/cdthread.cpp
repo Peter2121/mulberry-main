@@ -74,7 +74,8 @@ int cdthread::current_tid()
 #elif __dest_os == __win32_os
 	int this_tid = ::GetCurrentThreadId();
 #elif __dest_os == __linux_os
-	int this_tid = ACE_Thread::self();
+	// pthread_t is an integer on Linux but a pointer on FreeBSD; only used for logging
+	int this_tid = (int)(intptr_t)ACE_Thread::self();
 #endif
 
 	return this_tid;
