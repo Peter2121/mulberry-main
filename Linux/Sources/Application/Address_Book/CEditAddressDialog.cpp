@@ -60,6 +60,11 @@ CEditAddressDialog::CEditAddressDialog(JXDirector* supervisor)
 /////////////////////////////////////////////////////////////////////////////
 // CEditAddressDialog message handlers
 
+// TODO(contact-name-fields): when this form is migrated to the new GUI toolkit,
+// replace the single "Full Name" field by separate fields for first name(s),
+// surname and full name (and possibly prefix/suffix), mapped to vCard N and FN.
+// Form: adbkedit.fd. Not done in JX on purpose (the GUI will be replaced). The fields
+// are read and written in SetFields()/GetFields() below.
 void CEditAddressDialog::OnCreate()
 {
 // begin JXLayout
@@ -204,6 +209,10 @@ void CEditAddressDialog::OnCreate()
 void CEditAddressDialog::SetFields(CAdbkAddress* addr, bool allow_edit)
 {
 	mNickName->SetText(addr->GetADL());
+	// TODO(contact-name-fields): edit first name(s), surname and full name (and
+	// possibly prefix/suffix) as separate fields when this form is migrated to the
+	// new GUI toolkit. Today only the full name is editable: vcardstore::UpdateVCard
+	// keeps the server's N while it is unchanged and derives N from it otherwise.
 	mFullName->SetText(addr->GetName());
 	mEmail->SetText(addr->GetEmail(CAdbkAddress::eDefaultEmailType));
 	mCalendar->SetText(addr->GetCalendar());
@@ -246,6 +255,10 @@ bool CEditAddressDialog::GetFields(CAdbkAddress* addr)
 		done_edit = true;
 	}
 
+	// TODO(contact-name-fields): edit first name(s), surname and full name (and
+	// possibly prefix/suffix) as separate fields when this form is migrated to the
+	// new GUI toolkit. Today only the full name is editable: vcardstore::UpdateVCard
+	// keeps the server's N while it is unchanged and derives N from it otherwise.
 	txt = mFullName->GetText();
 	if (addr->GetName() != txt)
 	{

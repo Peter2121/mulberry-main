@@ -29,7 +29,16 @@
 		cSortAddressEmail,
 		cSortAddressEmailDomain,
 		cSortAddressNickName,
-		cSortAddressCompany
+		cSortAddressCompany,
+		// Added at the end: the values are saved in preferences
+		cSortAddressFirstNameOnly,		// "First Name" column
+		cSortAddressLastNameOnly		// "Surname" column
+	};
+
+	enum EAddressSortDirection
+	{
+		cAddressSortAscending = 1,
+		cAddressSortDescending
 	};
 
 	enum EShowAddressBy

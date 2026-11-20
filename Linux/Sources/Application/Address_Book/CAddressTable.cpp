@@ -40,6 +40,7 @@
 #include "CTaskClasses.h"
 #include "CTitleTableView.h"
 #include "CUserAction.h"
+#include "CStringUtils.h"
 
 #include <JXColormap.h>
 #include <JXDisplay.h>
@@ -683,6 +684,29 @@ void CAddressTable::DoKeySelection()
 		temp = new CAdbkAddress(NULL, NULL, NULL, NULL, mLastChars);
 		break;
 
+	case eAddrColumnFirstName:
+	case eAddrColumnLastName:
+	{
+		// Name parts are not a single field of an address: select the first
+		// row (in the current sort direction) starting with the typed text
+		const CAddressList* list = mAdbk->GetAddressList();
+		size_t typed = ::strlen(mLastChars);
+		for(unsigned long i = 0; i < list->size(); i++)
+		{
+			const CAdbkAddress* addr = static_cast<const CAdbkAddress*>(list->at(i));
+			cdstring part = GetColumnText(addr, GetSortBy());
+			if (::strncmpnocase(part, mLastChars, typed) == 0)
+			{
+				STableCell aCell(i + 1, 2);
+				UnselectAllCells();
+				FakeClickSelect(aCell, false);
+				ScrollCellIntoFrame(aCell, true);
+				break;
+			}
+		}
+		return;
+	}
+
 	default:
 		return;
 	}
@@ -762,6 +786,53 @@ void CAddressTable::UpdateCommand(unsigned long cmd, CCmdUI* cmdui)
 }
 
 // Draw the items
+// Text shown for an address in a column
+cdstring CAddressTable::GetColumnText(const CAdbkAddress* addr, int column_type)
+{
+	switch(column_type)
+	{
+	case eAddrColumnName:
+	case eAddrColumnNameLastFirst:
+		return addr->GetName();
+	
+	case eAddrColumnNickName:
+		return addr->GetADL();
+	
+	case eAddrColumnEmail:
+		return addr->GetMailAddress();
+	
+	case eAddrColumnCompany:
+		return addr->GetCompany();
+	
+	case eAddrColumnAddress:
+		return addr->GetAddress(CAdbkAddress::eDefaultAddressType);
+	
+	case eAddrColumnPhoneWork:
+		return addr->GetPhone(CAdbkAddress::eWorkPhoneType);
+	
+	case eAddrColumnPhoneHome:
+		return addr->GetPhone(CAdbkAddress::eHomePhoneType);
+	
+	case eAddrColumnFax:
+		return addr->GetPhone(CAdbkAddress::eFaxType);
+	
+	case eAddrColumnURLs:
+		return addr->GetURL();
+	
+	case eAddrColumnNotes:
+		return addr->GetNotes();
+	
+	case eAddrColumnFirstName:
+		return addr->GetFirstName();
+	
+	case eAddrColumnLastName:
+		return addr->GetLastName();
+	
+	default:
+		return cdstring::null_str;
+	}
+}
+
 void CAddressTable::DrawCell(JPainter* pDC, const STableCell& inCell, const JRect& inLocalRect)
 {
 	// Draw selection
@@ -775,53 +846,7 @@ void CAddressTable::DrawCell(JPainter* pDC, const STableCell& inCell, const JRec
 	// Determine which heading it is
 	SColumnInfo col_info = mTableView->GetColumnInfo()[inCell.col - 1];
 
-	cdstring theTxt;
-	switch(col_info.column_type)
-	{
-	case eAddrColumnName:
-	case eAddrColumnNameLastFirst:
-		theTxt = addr->GetName();
-		break;
-	
-	case eAddrColumnNickName:
-		theTxt = addr->GetADL();
-		break;
-	
-	case eAddrColumnEmail:
-		theTxt = addr->GetMailAddress();
-		break;
-	
-	case eAddrColumnCompany:
-		theTxt = addr->GetCompany();
-		break;
-	
-	case eAddrColumnAddress:
-		theTxt = addr->GetAddress(CAdbkAddress::eDefaultAddressType);
-		break;
-	
-	case eAddrColumnPhoneWork:
-		theTxt = addr->GetPhone(CAdbkAddress::eWorkPhoneType);
-		break;
-	
-	case eAddrColumnPhoneHome:
-		theTxt = addr->GetPhone(CAdbkAddress::eHomePhoneType);
-		break;
-	
-	case eAddrColumnFax:
-		theTxt = addr->GetPhone(CAdbkAddress::eFaxType);
-		break;
-	
-	case eAddrColumnURLs:
-		theTxt = addr->GetURL();
-		break;
-	
-	case eAddrColumnNotes:
-		theTxt = addr->GetNotes();
-		break;
-	
-	default:
-		break;
-	}
+	cdstring theTxt = GetColumnText(addr, col_info.column_type);
 
 	// Always draw icon in first column
 	JCoordinate left = inLocalRect.left;

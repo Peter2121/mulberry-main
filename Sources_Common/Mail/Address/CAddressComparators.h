@@ -36,6 +36,7 @@ public:
 	virtual AddressEqual	GetEquality() = 0;
 
 	static long	FirstNameFN(const CAddress* addr1, const CAddress* addr2);
+	static long	FirstNameOnlyFN(const CAddress* addr1, const CAddress* addr2);
 	static long	LastNameFN(const CAddress* addr1, const CAddress* addr2);
 	static long	EmailFN(const CAddress* addr1, const CAddress* addr2);
 	static long	EmailDomainFN(const CAddress* addr1, const CAddress* addr2);
@@ -43,6 +44,7 @@ public:
 	static long	CompanyFN(const CAddress* addr1, const CAddress* addr2);
 
 	static bool	CompareFirstName(const CAddress* addr1, const CAddress* addr2);
+	static bool	CompareFirstNameOnly(const CAddress* addr1, const CAddress* addr2);
 	static bool	CompareLastName(const CAddress* addr1, const CAddress* addr2);
 	static bool	CompareEmail(const CAddress* addr1, const CAddress* addr2);
 	static bool	CompareEmailOnly(const CAddress* addr1, const CAddress* addr2);
@@ -50,11 +52,12 @@ public:
 	static bool	CompareNickName(const CAddress* addr1, const CAddress* addr2);
 	static bool	CompareCompany(const CAddress* addr1, const CAddress* addr2);
 
+	// Surname part of a full name (also used by CAddress::GetLastName)
+	static const char* ExtractLastName(const char* name);
+
 	//private:						// Never construct one of these, always a sub-class
  protected: //But the sub class has to be able to call it's baseclass's constructor, which it can't do if it's private
 	CAddressComparator();
-	
-	static const char* ExtractLastName(const char* name);
 };
 
 class CFirstNameComparator : public CAddressComparator
@@ -67,6 +70,19 @@ public:
 		{ return CompareFirstName; }
 	virtual AddressEqual	GetEquality()
 		{ return FirstNameFN; }
+};
+
+// Sorts by first name(s) only (CAddress::GetFirstName), then surname
+class CFirstNameOnlyComparator : public CAddressComparator
+{
+public:
+	CFirstNameOnlyComparator() {}
+	virtual ~CFirstNameOnlyComparator() {}
+
+	virtual AddressCompare	GetComparator()
+		{ return CompareFirstNameOnly; }
+	virtual AddressEqual	GetEquality()
+		{ return FirstNameOnlyFN; }
 };
 
 class CLastNameComparator : public CAddressComparator

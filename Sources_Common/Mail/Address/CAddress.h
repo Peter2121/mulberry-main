@@ -50,6 +50,8 @@ public:
 		{ return mName; }
 	const cdstring&	GetName() const								// Get name
 		{ return mName; }
+	virtual cdstring GetFirstName() const;						// First name(s): the name before the surname
+	virtual cdstring GetLastName() const;						// Surname, found as when sorting by surname
 
 	void SetADL(const char* adl)								// Set adl
 		{ mAdl = adl; }

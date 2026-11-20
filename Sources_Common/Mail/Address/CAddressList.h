@@ -41,6 +41,9 @@ public:
 
 	void	SetComparator(CAddressComparator* comp);
 	void 	Sort();											// Force resort
+	void	SetAscending(bool ascending);					// Sort direction (re-sorts if changed)
+	bool	IsAscending() const
+		{ return mAscending; }
 
 	void	MergeList(const CAddressList* addrs);
 	void	SubtractList(const CAddressList* addrs);
@@ -74,6 +77,7 @@ public:
 
 private:
 	CAddressComparator*	mComparator;
+	bool				mAscending;					// Sort direction
 
 	void	InitAddressList(unsigned long capacity);
 };

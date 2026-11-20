@@ -35,6 +35,8 @@
 #include "CVCardDefinitions.h"
 #include "CVCardMultiValue.h"
 #include "CVCardN.h"
+#include "CVCardPlainTextValue.h"
+#include "CVCardNValue.h"
 #include "CVCardTextValue.h"
 #include "CVCardURIValue.h"
 #include "CVCardVCard.h"
@@ -73,6 +75,10 @@ void vcardstore::MapFromVCard(CAddressList* addrs, const vCard::CVCardVCard& vca
 	// Get entry (the component's map key)
 	addr->SetEntry(vcard.GetMapKey());
 
+	// Structured name (N), applied after the loop: it belongs to the full name (FN)
+	cdstring given_name;
+	cdstring family_name;
+
 	for(vCard::CVCardPropertyMap::const_iterator iter2 = vcard.GetProperties().begin(); iter2 != vcard.GetProperties().end(); iter2++)
 	{
 		// Get name (FN)
@@ -81,6 +87,23 @@ void vcardstore::MapFromVCard(CAddressList* addrs, const vCard::CVCardVCard& vca
 			const vCard::CVCardTextValue* tv = static_cast<const vCard::CVCardTextValue*>((*iter2).second.GetTextValue());
 			if (tv != NULL)
 				addr->SetName(tv->GetValue());
+		}
+		// Get structured name (N): family; given; additional; prefixes; suffixes
+		else if ((*iter2).first.compare(vCard::cVCardProperty_N, true) == 0)
+		{
+			const vCard::CVCardNValue* nv = (*iter2).second.GetNValue();
+			if (nv != NULL)
+			{
+				const vCard::CVCardN& n = const_cast<vCard::CVCardNValue*>(nv)->GetValue();
+				given_name = n.GetFirst();
+				if (!n.GetMiddle().empty())
+				{
+					if (!given_name.empty())
+						given_name += " ";
+					given_name += n.GetMiddle();
+				}
+				family_name = n.GetLast();
+			}
 		}
 		// Get nick-name (NICKNAME)
 		else if ((*iter2).first.compare(vCard::cVCardProperty_NICKNAME, true) == 0)
@@ -234,6 +257,9 @@ void vcardstore::MapFromVCard(CAddressList* addrs, const vCard::CVCardVCard& vca
 		}
 	}
 
+	// Structured name, for the full name read above
+	addr->SetStructuredName(given_name, family_name);
+
 	// Now add address
 	addrs->push_back(addr.release());
 }
@@ -274,9 +300,28 @@ void vcardstore::ChangeVCard(vCard::CVCardAddressBook* adbk, const CAdbkAddress*
 
 void vcardstore::UpdateVCard(vCard::CVCardVCard* vcard, const CAdbkAddress* addr)
 {
+	// Keep the existing structured name (N) unless the full name changed: it may
+	// hold what the full name cannot express (several given or family names,
+	// prefixes, suffixes), set by another client. Only a new card, a card without
+	// N, or an edited name gets an N derived from the full name.
+	// TODO(contact-name-fields): once the edit forms have separate first name,
+	// surname (and prefix/suffix) fields, write N from them instead of keeping or
+	// deriving it from the full name (CAdbkAddress would then hold editable N parts).
+	bool keep_n = false;
+	if (vcard->HasProperty(vCard::cVCardProperty_N))
+	{
+		vCard::CVCardPropertyMap::const_iterator fn = vcard->GetProperties().find(vCard::cVCardProperty_FN);
+		if (fn != vcard->GetProperties().end())
+		{
+			const vCard::CVCardPlainTextValue* tv = (*fn).second.GetTextValue();
+			keep_n = (tv != NULL) && (tv->GetValue() == addr->GetName());
+		}
+	}
+
 	// Remove all the ones we can change
 	vcard->RemoveProperties(vCard::cVCardProperty_FN);
-	vcard->RemoveProperties(vCard::cVCardProperty_N);
+	if (!keep_n)
+		vcard->RemoveProperties(vCard::cVCardProperty_N);
 	vcard->RemoveProperties(vCard::cVCardProperty_NICKNAME);
 	vcard->RemoveProperties(vCard::cVCardProperty_EMAIL);
 	vcard->RemoveProperties(vCard::cVCardProperty_ADR);
@@ -290,7 +335,8 @@ void vcardstore::UpdateVCard(vCard::CVCardVCard* vcard, const CAdbkAddress* addr
 	
 	// Now set them
 	vcard->AddProperty(vCard::CVCardProperty(vCard::cVCardProperty_FN, addr->GetName()));
-	vcard->AddProperty(vCard::CVCardProperty(vCard::cVCardProperty_N, vCard::CVCardN(addr->GetName())));
+	if (!keep_n)
+		vcard->AddProperty(vCard::CVCardProperty(vCard::cVCardProperty_N, vCard::CVCardN(addr->GetName())));
 	if (!addr->GetADL().empty())
 		vcard->AddProperty(vCard::CVCardProperty(vCard::cVCardProperty_NICKNAME, addr->GetADL()));
 	if (addr->GetEmails().size() == 0)

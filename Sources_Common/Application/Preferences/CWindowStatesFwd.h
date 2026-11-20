@@ -110,8 +110,18 @@ enum EAddrColumn
 	eAddrColumnFax,
 	eAddrColumnURLs,
 	eAddrColumnNotes,
-	eAddrColumnMax = eAddrColumnNotes
+	// New columns must be added at the end: the values are saved in preferences.
+	// Each needs a descriptor (cAdbkColumnDescriptors), a title
+	// (UI::Titles::AddrSearch), header menu items and its cell text
+	// (CAddressTable::GetColumnText).
+	eAddrColumnFirstName,
+	eAddrColumnLastName,
+	eAddrColumnMax = eAddrColumnLastName
 };
+
+// Default width of the First Name and Surname columns (pixels): used for new
+// windows, and as the minimum when an existing column is switched to them
+const long cAddrNameColumnWidth = 120;
 
 // Column header info
 enum EAdbkSearchMethod

@@ -54,6 +54,11 @@ CAddressPersonalPanel::~CAddressPersonalPanel()
 // O T H E R  M E T H O D S ____________________________________________________________________________
 
 // Get details of sub-panes
+// TODO(contact-name-fields): when this form is migrated to the new GUI toolkit,
+// replace the single "Full Name" field by separate fields for first name(s),
+// surname and full name (and possibly prefix/suffix), mapped to vCard N and FN.
+// Form: adbkpersonal.fd. Not done in JX on purpose (the GUI will be replaced). The fields
+// are read and written in SetFields()/GetFields() below.
 void CAddressPersonalPanel::OnCreate()
 {
 // begin JXLayout1
@@ -121,6 +126,10 @@ void CAddressPersonalPanel::SetFields(const CAdbkAddress* addr)
 {
 	cdstring txt;
 
+	// TODO(contact-name-fields): edit first name(s), surname and full name (and
+	// possibly prefix/suffix) as separate fields when this form is migrated to the
+	// new GUI toolkit. Today only the full name is editable: vcardstore::UpdateVCard
+	// keeps the server's N while it is unchanged and derives N from it otherwise.
 	if (addr)
 		txt = addr->GetName();
 	mFullName->SetText(txt);
@@ -152,6 +161,10 @@ bool CAddressPersonalPanel::GetFields(CAdbkAddress* addr)
 	cdstring txt;
 	bool done_edit = false;
 
+	// TODO(contact-name-fields): edit first name(s), surname and full name (and
+	// possibly prefix/suffix) as separate fields when this form is migrated to the
+	// new GUI toolkit. Today only the full name is editable: vcardstore::UpdateVCard
+	// keeps the server's N while it is unchanged and derives N from it otherwise.
 	txt = mFullName->GetText();
 	if (addr->GetName() != txt)
 	{

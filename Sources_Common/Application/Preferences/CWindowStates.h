@@ -494,6 +494,10 @@ public:
 		{ return mGroupShow; }
 	long GetSplitterSize() const
 		{ return mSplitterSize; }
+	bool GetAscending() const
+		{ return mAscending; }
+	void SetAscending(bool ascending)
+		{ mAscending = ascending; }
 
 	virtual bool Merge(const CWindowState& state);
 
@@ -508,6 +512,7 @@ protected:
 	bool			mAddressShow;
 	bool			mGroupShow;
 	long			mSplitterSize;
+	bool			mAscending;					// Sort direction
 
 	virtual void _copy(const CWindowState& copy);
 

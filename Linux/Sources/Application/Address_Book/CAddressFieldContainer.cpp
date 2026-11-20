@@ -58,6 +58,9 @@ void CAddressFieldContainer::OnCreate()
 void CAddressFieldContainer::SetAddress(const CAdbkAddress* addr)
 {
     // Only called if top level
+    // TODO(contact-name-fields): show first name(s), surname and full name (and
+    // possibly prefix/suffix) as separate fields when the advanced editor is
+    // migrated to the new GUI toolkit (fields are created in the constructor).
     static_cast<CAddressFieldBase*>(mFields[0])->SetDetails("Name:", 0, addr ? addr->GetName() : "");
     static_cast<CAddressFieldBase*>(mFields[1])->SetDetails("Nick-Name:", 0, addr ? addr->GetADL() : "");
     static_cast<CAddressFieldBase*>(mFields[2])->SetDetails("Organization:", 0, addr ? addr->GetCompany() : "");
@@ -74,6 +77,7 @@ bool CAddressFieldContainer::GetAddress(CAdbkAddress* addr)
     bool changed = false;
     int newtype = 0;
     cdstring newdata;
+    // TODO(contact-name-fields): read the separate name fields here (see SetAddress)
     if (static_cast<CAddressFieldBase*>(mFields[0])->GetDetails(newtype, newdata))
     {
         addr->SetName(newdata);

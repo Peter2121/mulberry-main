@@ -98,6 +98,33 @@ void CAdbkAddress::_copy_CAdbkAddress(const CAdbkAddress& copy)
 	mPreferredPhone = copy.mPreferredPhone;
 	mURL = copy.mURL;
 	mNotes = copy.mNotes;
+	mGivenName = copy.mGivenName;
+	mFamilyName = copy.mFamilyName;
+	mStructuredNameOf = copy.mStructuredNameOf;
+}
+
+// Structured name read from the server (vCard N)
+void CAdbkAddress::SetStructuredName(const cdstring& given, const cdstring& family)
+{
+	mGivenName = given;
+	mFamilyName = family;
+	mStructuredNameOf = GetName();
+}
+
+// The structured name applies while the full name is the one it was read with
+bool CAdbkAddress::HasStructuredName() const
+{
+	return (!mGivenName.empty() || !mFamilyName.empty()) && (GetName() == mStructuredNameOf);
+}
+
+cdstring CAdbkAddress::GetFirstName() const
+{
+	return HasStructuredName() ? mGivenName : CAddress::GetFirstName();
+}
+
+cdstring CAdbkAddress::GetLastName() const
+{
+	return HasStructuredName() ? mFamilyName : CAddress::GetLastName();
 }
 
 // Compare with another

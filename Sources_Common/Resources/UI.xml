@@ -320,6 +320,8 @@
 		<string>Fax</string>
 		<string>URLs</string>
 		<string>Notes</string>
+		<string>First Name</string>
+		<string>Surname</string>
 	</stringarray>
 
 	<stringarray id="UI::Titles::CalendarStore">

@@ -119,6 +119,9 @@ public:
 
 	virtual int		GetSortBy();								// Get sort
 	virtual void	SetSortBy(int sort);						// Force change of sort
+	virtual int		GetShowBy();								// Get sort direction (EAddressSortDirection)
+	virtual void	SetShowBy(int show);						// Force change of sort direction
+	virtual void	ToggleShowBy();								// Reverse sort direction (second click on the sorted column)
 
 	
 protected:

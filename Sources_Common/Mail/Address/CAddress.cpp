@@ -19,6 +19,8 @@
 
 #include "CAddress.h"
 
+#include "CAddressComparators.h"
+
 #include "CRFC822.h"
 #include "CStringUtils.h"
 
@@ -378,6 +380,58 @@ void CAddress::CopyMailAddress(const char* copy)
 }
 
 // Get sensible name from address
+// Split the full name into first name(s) and surname, the same way sorting by
+// surname does (CAddressComparator::ExtractLastName), so that the "First Name"
+// and "Surname" columns agree with that sort:
+//   "John Smith" -> "John" + "Smith", "John A. Smith" -> "John A." + "Smith",
+//   "Smith, John" -> "John" + "Smith", "Madonna" -> "" + "Madonna".
+// Only the full name is stored for every address book type, so this is a
+// heuristic; vCard's structured N property would be exact (not kept today).
+static void SplitFullName(const cdstring& name, cdstring& first, cdstring& last)
+{
+	first = cdstring::null_str;
+	last = cdstring::null_str;
+
+	cdstring full(name);
+	full.trimspace();
+	if (full.empty())
+		return;
+
+	const char* start = full.c_str();
+	const char* comma = ::strchr(start, ',');
+	if (comma != NULL)
+	{
+		// "Surname, First name"
+		last = cdstring(start, comma - start);
+		first = comma + 1;
+	}
+	else
+	{
+		const char* surname = CAddressComparator::ExtractLastName(start);
+		last = surname;
+		first = cdstring(start, surname - start);
+	}
+
+	first.trimspace();
+	last.trimspace();
+}
+
+cdstring CAddress::GetFirstName() const
+{
+	cdstring first;
+	cdstring last;
+	SplitFullName(mName, first, last);
+	return first;
+}
+
+cdstring CAddress::GetLastName() const
+{
+	cdstring first;
+	cdstring last;
+	SplitFullName(mName, first, last);
+	return last;
+}
+
 cdstring CAddress::GetNamedAddress() const
 {
 	// Use name if there

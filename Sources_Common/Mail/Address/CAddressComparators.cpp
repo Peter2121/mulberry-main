@@ -132,6 +132,19 @@ long CAddressComparator::LastNameFN(const CAddress* addr1, const CAddress* addr2
 	else if (is_email1 && is_email2)
 		return ::strcmpnocase(name1, name2);
 
+	// A structured name read from the server (vCard N) gives the exact surname and
+	// first name: use them, so that this sort matches the Surname and First Name
+	// columns (e.g. "de la Fontaine" sorts under D, not F)
+	const CAdbkAddress* adbk1 = dynamic_cast<const CAdbkAddress*>(addr1);
+	const CAdbkAddress* adbk2 = dynamic_cast<const CAdbkAddress*>(addr2);
+	if (((adbk1 != NULL) && adbk1->HasStructuredName()) || ((adbk2 != NULL) && adbk2->HasStructuredName()))
+	{
+		int result = ::strcmpnocase(addr1->GetLastName(), addr2->GetLastName());
+		if (result != 0)
+			return result;
+		return ::strcmpnocase(addr1->GetFirstName(), addr2->GetFirstName());
+	}
+
 	// Get pointer to last name for compare
 	const char* last1 = ExtractLastName(name1.c_str());
 	const char* last2 = ExtractLastName(name2.c_str());
@@ -366,6 +379,51 @@ bool CAddressComparator::CompareFirstName(const CAddress* addr1, const CAddress*
 
 	if (result)
 		// Emails are different
+		return (result < 0);
+
+	// Emails are also equal - check nickname finally
+	return (NickNameFN(addr1, addr2) < 0);
+}
+
+// Compare first names only (the part of the full name before the surname)
+long CAddressComparator::FirstNameOnlyFN(const CAddress* addr1, const CAddress* addr2)
+{
+	cdstring name1 = addr1->GetFirstName();
+	cdstring name2 = addr2->GetFirstName();
+
+	// Empty first names sort last, as empty names do in FirstNameFN
+	if (name1.empty() && name2.empty())
+		return 0;
+	else if (name1.empty())
+		return 1;
+	else if (name2.empty())
+		return -1;
+	else
+		return ::strcmpnocase(name1, name2);
+}
+
+bool CAddressComparator::CompareFirstNameOnly(const CAddress* addr1, const CAddress* addr2)
+{
+	// Compare ptrs first
+	if (addr1 == addr2)
+		return false;
+
+	long result = FirstNameOnlyFN(addr1, addr2);
+
+	if (result)
+		// First names are different
+		return (result < 0);
+
+	// First names are the same - check surname
+	result = LastNameFN(addr1, addr2);
+
+	if (result)
+		return (result < 0);
+
+	// Names are the same - check email
+	result = EmailFN(addr1, addr2);
+
+	if (result)
 		return (result < 0);
 
 	// Emails are also equal - check nickname finally

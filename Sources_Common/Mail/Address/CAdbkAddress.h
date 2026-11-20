@@ -202,6 +202,16 @@ public:
 	void SetCalendar(const char* theCalendar, EEmailType type, bool append = false);	// Set calendar
 	const cdstring&	GetCalendar(EEmailType type) const;									// Get calendar
     
+	// Structured name (vCard N: given and family names) as read from the server.
+	// Used for the first name and surname only while the full name is still the
+	// one it was read with; once the name is edited it no longer applies.
+	// TODO(contact-name-fields): becomes editable data (with prefix/suffix) when the
+	// contact edit forms get separate name fields in the new GUI toolkit.
+	void SetStructuredName(const cdstring& given, const cdstring& family);
+	bool HasStructuredName() const;
+	virtual cdstring GetFirstName() const;
+	virtual cdstring GetLastName() const;
+
 	void SetCompany(const char* theCompany)							// Set company
 		{ mCompany = theCompany; }
 	const cdstring&	GetCompany() const								// Get company
@@ -267,6 +277,9 @@ private:
 	EPhoneType			mPreferredPhone;				// Preferred phone type
 	cdstring			mURL;							// URL
 	cdstring			mNotes;							// Notes
+	cdstring			mGivenName;						// Structured name: given (and middle) names
+	cdstring			mFamilyName;					// Structured name: family name
+	cdstring			mStructuredNameOf;				// Full name the structured name belongs to
 
 	void _init_CAdbkAddress();
 	void _copy_CAdbkAddress(const CAdbkAddress& copy);

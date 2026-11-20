@@ -44,6 +44,8 @@ public:
 		kPopupFax,
 		kPopupURLs,
 		kPopupNotes,
+		kPopupFirstName,
+		kPopupLastName,
 		kPopupInsertAfter,
 		kPopupInsertBefore,
 		kPopupDelete

@@ -1291,6 +1291,8 @@ const char* cAdbkColumnDescriptors[] =
 	 "Fax",
 	 "URLs",
 	 "Notes",
+	 "First Name",
+	 "Last Name",
 	 NULL};
 
 // Default constructor
@@ -1586,6 +1588,7 @@ CNewAddressBookWindowState::CNewAddressBookWindowState()
 	mAddressShow = true;
 	mGroupShow = true;
 	mSplitterSize = 0x10000000 / 2; // Splitter ratio of 0.5
+	mAscending = true;
 }
 
 // Build from window
@@ -1605,6 +1608,7 @@ CNewAddressBookWindowState::CNewAddressBookWindowState(const char* name, Rect* b
 	mAddressShow = addressShow;
 	mGroupShow = groupShow;
 	mSplitterSize = splitter;
+	mAscending = true;
 }
 
 // Assignment with same type
@@ -1619,6 +1623,7 @@ void CNewAddressBookWindowState::_copy(const CWindowState& copy)
 	mAddressShow = dynamic_cast<const CNewAddressBookWindowState&>(copy).mAddressShow;
 	mGroupShow = dynamic_cast<const CNewAddressBookWindowState&>(copy).mGroupShow;
 	mSplitterSize = dynamic_cast<const CNewAddressBookWindowState&>(copy).mSplitterSize;
+	mAscending = dynamic_cast<const CNewAddressBookWindowState&>(copy).mAscending;
 }
 
 // Default constructor
@@ -1648,9 +1653,19 @@ void CNewAddressBookWindowState::ResetColumns(void)
 
 	// Add default columns
 
-	// Name, width = 250
+	// Full name, width = 200
 	newInfo.column_type = eAddrColumnName;
-	newInfo.column_width = 250;
+	newInfo.column_width = 200;
+	info.push_back(newInfo);
+
+	// First name
+	newInfo.column_type = eAddrColumnFirstName;
+	newInfo.column_width = cAddrNameColumnWidth;
+	info.push_back(newInfo);
+
+	// Surname
+	newInfo.column_type = eAddrColumnLastName;
+	newInfo.column_width = cAddrNameColumnWidth;
 	info.push_back(newInfo);
 
 	CScreenColumnInfo temp(info);
@@ -1665,6 +1680,7 @@ bool CNewAddressBookWindowState::PartialCompare(const CWindowState& default_stat
 			(mAddressShow == static_cast<const CNewAddressBookWindowState&>(default_state).mAddressShow) &&
 			(mGroupShow == static_cast<const CNewAddressBookWindowState&>(default_state).mGroupShow) &&
 			(mSplitterSize == static_cast<const CNewAddressBookWindowState&>(default_state).mSplitterSize) &&
+			(mAscending == static_cast<const CNewAddressBookWindowState&>(default_state).mAscending) &&
 			CTableWindowState::PartialCompare(default_state);
 }
 
@@ -1682,13 +1698,15 @@ bool CNewAddressBookWindowState::Merge(const CWindowState& istate)
 				(mGroupSize != state.mGroupSize) ||
 				(mAddressShow != state.mAddressShow) ||
 				(mGroupShow != state.mGroupShow) ||
-				(mSplitterSize != state.mSplitterSize);
+				(mSplitterSize != state.mSplitterSize) ||
+				(mAscending != state.mAscending);
 
 	mSort = state.mSort;
 	mAddressSize = state.mAddressSize;
 	mGroupSize = state.mGroupSize;
 	mAddressShow = state.mAddressShow;
 	mGroupShow = state.mGroupShow;
+	mAscending = state.mAscending;
 
 	// Only merge when non-zero
 	if (state.mSplitterSize != 0)
@@ -1717,6 +1735,10 @@ cdstring CNewAddressBookWindowState::GetInfo(void) const
 	info += cSpace;
 
 	info += cdstring(mSplitterSize);
+	info += cSpace;
+
+	// Added later: sort direction (optional when reading)
+	info += mAscending ? cValueBoolTrue : cValueBoolFalse;
 
 	// Got it all
 	return info;
@@ -1737,6 +1759,10 @@ bool CNewAddressBookWindowState::SetInfo(char_stream& txt, NumVersion vers_prefs
 	txt.get(mAddressShow);
 	txt.get(mGroupShow);
 	txt.get(mSplitterSize);
+
+	// Added later: sort direction, absent in older preferences
+	mAscending = true;
+	txt.get(mAscending);
 
 	return true;
 }

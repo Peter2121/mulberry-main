@@ -32,6 +32,19 @@
 #include <algorithm>
 #include <ostream>
 
+// Comparator applying the list's sort direction: descending swaps the arguments
+struct SDirectedCompare
+{
+	AddressCompare	mCompare;
+	bool			mAscending;
+
+	SDirectedCompare(AddressCompare compare, bool ascending)
+		: mCompare(compare), mAscending(ascending) {}
+
+	bool operator()(const CAddress* addr1, const CAddress* addr2) const
+		{ return mAscending ? mCompare(addr1, addr2) : mCompare(addr2, addr1); }
+};
+
 // Specializations
 
 #if 0
@@ -237,6 +250,7 @@ void CAddressList::InitAddressList(unsigned long capacity)
 		reserve(capacity);
 
 	mComparator = NULL;
+	mAscending = true;
 
 } // CAddressList::InitAddressList
 
@@ -254,10 +268,20 @@ void CAddressList::SetComparator(CAddressComparator* comp)
 void CAddressList::Sort()
 {
 	if (mComparator)
-		std::stable_sort(begin(), end(), mComparator->GetComparator());
+		std::stable_sort(begin(), end(), SDirectedCompare(mComparator->GetComparator(), mAscending));
 }
 
 // Merge new list into current - filter out duplicates
+// Change sort direction
+void CAddressList::SetAscending(bool ascending)
+{
+	if (mAscending != ascending)
+	{
+		mAscending = ascending;
+		Sort();
+	}
+}
+
 void CAddressList::MergeList(const CAddressList* addrs)
 {
 	// Protect against empty list
@@ -400,7 +424,7 @@ void CAddressList::push_back_sorted(CAddress* anAddr)
 	CAddressList::iterator found = end();
 
 	if (mComparator)
-		found = std::lower_bound(begin(), end(), (const CAddress*&) anAddr, mComparator->GetComparator());
+		found = std::lower_bound(begin(), end(), (const CAddress*&) anAddr, SDirectedCompare(mComparator->GetComparator(), mAscending));
 
 	insert(found, anAddr);
 }
@@ -429,7 +453,7 @@ unsigned long CAddressList::FetchInsertIndexOf(const CAddress* addr) const
 	if (!addr)
 		return 0;
 
-	CAddressList::const_iterator found = std::lower_bound(begin(), end(), addr, mComparator->GetComparator());
+	CAddressList::const_iterator found = std::lower_bound(begin(), end(), addr, SDirectedCompare(mComparator->GetComparator(), mAscending));
 
 	if (found != end())
 	{

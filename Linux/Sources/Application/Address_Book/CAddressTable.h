@@ -22,6 +22,8 @@
 
 #include "CTableDragAndDrop.h"
 
+#include "cdstring.h"
+
 // Classes
 class CAdbkAddress;
 class CAddressBook;
@@ -36,6 +38,9 @@ class CAddressTable : public CTableDragAndDrop
 	friend class CAddressBookView;
 
 public:
+	// Text shown for an address in a column (EAddrColumn); shared with the address search window
+	static cdstring	GetColumnText(const CAdbkAddress* addr, int column_type);
+
 	CAddressTable(JXScrollbarSet* scrollbarSet, 
 						 JXContainer* enclosure,
 						 const HSizingOption hSizing, 

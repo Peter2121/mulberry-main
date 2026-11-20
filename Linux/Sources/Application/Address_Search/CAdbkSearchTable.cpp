@@ -20,6 +20,7 @@
 
 #include "CAdbkSearchTable.h"
 
+#include "CAddressTable.h"
 #include "CAdbkSearchWindow.h"
 #include "CAdbkServerPopup.h"
 #include "CClipboard.h"
@@ -548,52 +549,7 @@ void CAdbkSearchTable::DrawCell(JPainter* pDC, const STableCell& inCell, const J
 
 	if (nestingLevel)
 	{
-		switch(col_info.column_type)
-		{
-		case eAddrColumnName:
-		case eAddrColumnNameLastFirst:
-			theTxt = ((CAdbkAddress*) data)->GetName();
-			break;
-		
-		case eAddrColumnNickName:
-			theTxt = static_cast<CAdbkAddress*>(data)->GetADL();
-			break;
-		
-		case eAddrColumnEmail:
-			theTxt = static_cast<CAdbkAddress*>(data)->GetMailAddress();
-			break;
-		
-		case eAddrColumnCompany:
-			theTxt = static_cast<CAdbkAddress*>(data)->GetCompany();
-			break;
-		
-		case eAddrColumnAddress:
-			theTxt = static_cast<CAdbkAddress*>(data)->GetAddress(CAdbkAddress::eDefaultAddressType);
-			break;
-		
-		case eAddrColumnPhoneWork:
-			theTxt = static_cast<CAdbkAddress*>(data)->GetPhone(CAdbkAddress::eWorkPhoneType);
-			break;
-		
-		case eAddrColumnPhoneHome:
-			theTxt = static_cast<CAdbkAddress*>(data)->GetPhone(CAdbkAddress::eHomePhoneType);
-			break;
-		
-		case eAddrColumnFax:
-			theTxt = static_cast<CAdbkAddress*>(data)->GetPhone(CAdbkAddress::eFaxType);
-			break;
-		
-		case eAddrColumnURLs:
-			theTxt = static_cast<CAdbkAddress*>(data)->GetURL();
-			break;
-		
-		case eAddrColumnNotes:
-			theTxt = static_cast<CAdbkAddress*>(data)->GetNotes();
-			break;
-		
-		default:
-			break;
-		}
+		theTxt = CAddressTable::GetColumnText(static_cast<CAdbkAddress*>(data), col_info.column_type);
 		if (inCell.col == 1)
 			DrawHierarchyRow(pDC, inCell.row, inLocalRect, theTxt, icon);
 		else

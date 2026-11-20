@@ -729,12 +729,22 @@ void CAddressBookView::InitColumns(void)
 	mTable->InsertCols(1, 1);
 	GetGroupTable()->InsertCols(1, 1);
 
-	// Name, width = 240
-	newInfo.column_type = eAddrColumnName;
-	newInfo.column_width = 240;
-	mColumnInfo.push_back(newInfo);
-	mTitles->SetColWidth(newInfo.column_width, 1, 1);
-	mTable->SetColWidth(newInfo.column_width, 1, 1);
+	// Full name, first name, surname
+	const SColumnInfo defaults[] = { { eAddrColumnName, 200 }, { eAddrColumnFirstName, cAddrNameColumnWidth }, { eAddrColumnLastName, cAddrNameColumnWidth } };
+	for(size_t i = 0; i < sizeof(defaults) / sizeof(defaults[0]); i++)
+	{
+		if (i > 0)
+		{
+			// Arguments are (how many, after which column): one column after column i.
+			// The groups table keeps its single column.
+			mTitles->InsertCols(1, i);
+			mTable->InsertCols(1, i);
+		}
+		newInfo = defaults[i];
+		mColumnInfo.push_back(newInfo);
+		mTitles->SetColWidth(newInfo.column_width, i + 1, i + 1);
+		mTable->SetColWidth(newInfo.column_width, i + 1, i + 1);
+	}
 }
 
 // Update captions
@@ -798,6 +808,7 @@ void CAddressBookView::ResetState(bool force)
 	// Set sort trait
 	mSortColumnType = MapSortToColumn(state->GetSort());
 	SetSortBy(GetSortBy());
+	SetShowBy(state->GetAscending() ? cAddressSortAscending : cAddressSortDescending);
 	
 	// Expand both
 	if (state->GetAddressShow() && state->GetGroupShow())
@@ -892,7 +903,10 @@ void CAddressBookView::SaveState(void)
 																		mGroupTwister->IsChecked(),
 																		Is3Pane() ? 0 : GetAddressBookWindow()->GetSplitter()->GetRelativeSplitPos());
 	if (info)
+	{
+		info->SetAscending(GetShowBy() != cAddressSortDescending);
 		CPreferences::sPrefs->AddAddressBookWindowInfo(info);
+	}
 }
 
 // Save current state in prefs
@@ -931,8 +945,35 @@ void CAddressBookView::SaveDefaultState(void)
 										mAddrTwister->IsChecked(),
 										mGroupTwister->IsChecked(),
 										Is3Pane() ? 0 : GetAddressBookWindow()->GetSplitter()->GetRelativeSplitPos());
+	state.SetAscending(GetShowBy() != cAddressSortDescending);
 	if (CPreferences::sPrefs->mNewAddressBookWindowDefault.Value().Merge(state))
 		CPreferences::sPrefs->mNewAddressBookWindowDefault.SetDirty();
+}
+
+// Get sort direction
+int CAddressBookView::GetShowBy()
+{
+	CAddressBook* adbk = GetAddressBook();
+	return ((adbk != NULL) && !adbk->GetAddressList()->IsAscending()) ? cAddressSortDescending : cAddressSortAscending;
+}
+
+// Force change of sort direction
+void CAddressBookView::SetShowBy(int show)
+{
+	CAddressBook* adbk = GetAddressBook();
+	if (adbk == NULL)
+		return;
+
+	adbk->GetAddressList()->SetAscending(show != cAddressSortDescending);
+
+	// Redisplay
+	FRAMEWORK_REFRESH_WINDOW(this);
+}
+
+// Reverse sort direction (second click on the sorted column header)
+void CAddressBookView::ToggleShowBy()
+{
+	SetShowBy((GetShowBy() == cAddressSortDescending) ? cAddressSortAscending : cAddressSortDescending);
 }
 
 // Reset text traits from prefs

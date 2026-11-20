@@ -43,6 +43,8 @@ public:
 		kPopupFax,
 		kPopupURLs,
 		kPopupNotes,
+		kPopupFirstName,
+		kPopupLastName,
 		kPopupInsertAfter,
 		kPopupInsertBefore,
 		kPopupDelete
@@ -59,6 +61,7 @@ public:
 
 protected:
 	virtual void MenuChoice(TableIndexT col, bool sort_col, JIndex menu_item);
+	virtual void DrawItem(JPainter* p, SColumnInfo& col_info, const JRect &cellRect);
 };
 
 #endif

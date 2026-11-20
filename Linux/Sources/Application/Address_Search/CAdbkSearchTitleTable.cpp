@@ -54,7 +54,7 @@ void CAdbkSearchTitleTable::OnCreate(void)
 	CTitleTable::OnCreate();
 
 	cdstring menu = "Full Name (Smart Sort) %r | Full Name (Simple Sort) %r | Nick-Name %r | Email Address %r | Company %r | Address %r |"
-				" Phone Work %r | Phone Home %r | Fax %r | URLs %r | Notes %r %l |"
+				" Phone Work %r | Phone Home %r | Fax %r | URLs %r | Notes %r | First Name %r | Surname %r %l |"
 				" Insert Column after | Insert Column before | Delete Column";
 	SetTitleInfo(false, true, "UI::Titles::AddrSearch", eAddrColumnMax, menu);
 }
@@ -80,7 +80,15 @@ void CAdbkSearchTitleTable::MenuChoice(TableIndexT col, bool sort_col, JIndex me
 	case kPopupFax:
 	case kPopupURLs:
 	case kPopupNotes:
+	case kPopupFirstName:
+	case kPopupLastName:
 		window->SetColumnType(col, eAddrColumnName + menu_item - kPopupName);
+
+		// Columns inserted from this menu get a generic width that is too
+		// narrow for names: widen (never shrink) when switching to them
+		if (((menu_item == kPopupFirstName) || (menu_item == kPopupLastName)) &&
+			(window->GetColumnInfo()[col - 1].column_width < cAddrNameColumnWidth))
+			window->SetColumnWidth(col, cAddrNameColumnWidth);
 		break;
 	
 	case kPopupInsertAfter:

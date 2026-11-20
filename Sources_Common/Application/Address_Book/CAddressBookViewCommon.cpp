@@ -369,6 +369,12 @@ ESortAddressBy CAddressBookView::MapColumnToSort(EAddrColumn col) const
 
 	case eAddrColumnCompany:
 		return cSortAddressCompany;
+
+	case eAddrColumnFirstName:
+		return cSortAddressFirstNameOnly;
+
+	case eAddrColumnLastName:
+		return cSortAddressLastNameOnly;
 	}
 }
 
@@ -393,6 +399,12 @@ EAddrColumn CAddressBookView::MapSortToColumn(ESortAddressBy sort) const
 
 	case cSortAddressCompany:
 		return eAddrColumnCompany;
+
+	case cSortAddressFirstNameOnly:
+		return eAddrColumnFirstName;
+
+	case cSortAddressLastNameOnly:
+		return eAddrColumnLastName;
 	}
 }
 
@@ -403,6 +415,11 @@ void CAddressBookView::SetSortBy(int sort)
 	CAddressBook* adbk = GetAddressBook();
 	if (!adbk)
 		return;
+
+	// Sorting by another column starts in ascending order (a second click on
+	// the same column reverses it: see ToggleShowBy)
+	if (sort != mSortColumnType)
+		adbk->GetAddressList()->SetAscending(true);
 
 	// Change sort method
 	switch (static_cast<EAddrColumn>(sort))
@@ -425,6 +442,15 @@ void CAddressBookView::SetSortBy(int sort)
 
 	case eAddrColumnCompany:
 		adbk->GetAddressList()->SetComparator(new CCompanyComparator);
+		break;
+
+	case eAddrColumnFirstName:
+		adbk->GetAddressList()->SetComparator(new CFirstNameOnlyComparator);
+		break;
+
+	case eAddrColumnLastName:
+		// Same order as the full name's smart (surname) sort
+		adbk->GetAddressList()->SetComparator(new CLastNameComparator);
 		break;
 
 	case eAddrColumnAddress:
