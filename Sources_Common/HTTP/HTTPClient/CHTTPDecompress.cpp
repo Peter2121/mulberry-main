@@ -271,3 +271,73 @@ void inflate_streambuf::FlushZstd()
 	} while (input.pos < input.size);
 #endif
 }
+
+#pragma mark ____________________________tee_streambuf
+
+int tee_streambuf::overflow(int c)
+{
+	if (c == EOF)
+		return sync();
+
+	char ch = static_cast<char>(c);
+	mOutput.write(&ch, 1);
+	if (mCopy != NULL)
+		mCopy->write(&ch, 1);
+
+	return mOutput.good() ? c : EOF;
+}
+
+std::streamsize tee_streambuf::xsputn(const char* s, std::streamsize n)
+{
+	mOutput.write(s, n);
+	if (mCopy != NULL)
+		mCopy->write(s, n);
+
+	return mOutput.good() ? n : 0;
+}
+
+int tee_streambuf::sync()
+{
+	mOutput.flush();
+	if (mCopy != NULL)
+		mCopy->flush();
+
+	return mOutput.good() ? 0 : -1;
+}
+
+#pragma mark ____________________________response_body
+
+response_body::response_body(std::ostream& output, inflate_streambuf::EEncoding encoding, std::ostream* log)
+	: mOutput(output), mLog(log)
+{
+	if (encoding == inflate_streambuf::eNone)
+		return;
+
+	// Decompressed data goes to the output and, if logging, to the log
+	std::ostream* target = &mOutput;
+	if (mLog != NULL)
+	{
+		mTee.reset(new tee_streambuf(mOutput, mLog));
+		mTeeStream.reset(new std::ostream(mTee.get()));
+		target = mTeeStream.get();
+	}
+
+	mDecoder.reset(new inflate_streambuf(*target, encoding));
+	mDecoderStream.reset(new std::ostream(mDecoder.get()));
+}
+
+void response_body::finish()
+{
+	if (!mDecoder)
+		return;
+
+	// A write error (e.g. corrupt data) has already been turned into badbit
+	if (mDecoderStream->bad())
+	{
+		CLOG_LOGTHROW(CGeneralException, -1L);
+		throw CGeneralException(-1L);
+	}
+
+	// Decode what is left: called directly, this throws on corrupt data
+	mDecoder->pubsync();
+}

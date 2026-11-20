@@ -141,7 +141,7 @@ protected:
 	virtual void DoRequest(CHTTPRequestResponse* request);
 	virtual void WriteRequestData(CHTTPRequestResponse* request);
 	virtual void ReadResponseData(CHTTPRequestResponse* request);
-	virtual void ReadResponseDataLength(CHTTPRequestResponse* request, unsigned long read_length);
+	virtual void ReadResponseDataLength(std::ostream& output, std::ostream* log, unsigned long read_length);
 	virtual unsigned long ReadResponseDataChunked(CHTTPRequestResponse* request);
 
 	virtual void HandleHTTPError(CHTTPRequestResponse* request);

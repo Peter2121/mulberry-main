@@ -115,39 +115,56 @@ CINETClient* CCalDAVCalendarClient::CloneConnection()
 
 #pragma mark ____________________________Protocol
 
-// For CalDAV we need to do this twice - once on the base URI passed in, and then,
-// if we know access control is supported, a second time on the principal resource
-// which we know must indicate caldav capability levels.
+// For CalDAV we need to do this twice - once on the base URI passed in, and then
+// a second time on the principal resource, which we know must indicate caldav
+// capability levels. The principal is found with DAV:current-user-principal
+// (RFC 5397), which does not need access control support: servers that do not
+// advertise "access-control" (e.g. Radicale) must work too. If no principal can
+// be found, the base URI configured in the account is used as it is.
 bool CCalDAVCalendarClient::Initialise(const cdstring& host, const cdstring& base_uri)
 {
 	cdstring actual_base_uri = base_uri;
 	if (actual_base_uri.length() == 0)
 		actual_base_uri = "/";
-		
-	if (CWebDAVCalendarClient::Initialise(host, actual_base_uri) && HasDAVACL())
+
+	if (!CWebDAVCalendarClient::Initialise(host, actual_base_uri))
+		return false;
+
+	// A web server answers any address, e.g. with an HTML page. Without a DAV
+	// header this is not a CalDAV location (typically a wrong path): say so
+	// instead of carrying on with an empty list.
+	if (!HasDAV())
 	{
-		bool no_preport = false;
-#ifdef NO_PRINCIPAL_REPORT
-		no_preport = (GetCalendarProtocol()->GetAccount()->GetName().find("nopreport") != cdstring::npos);
-#endif
-		if (no_preport)
-			return true;
-		else
-		{
-			if (GetSelfPrincipalResource(actual_base_uri, mPrincipalURI))
-			{
-				bool result = CWebDAVCalendarClient::Initialise(host, mPrincipalURI);
-				if (result)
-				{
-					// Get details from principal resource
-					_GetPrincipalDetails(mPrincipalURI, true);
-				}
-				return result;
-			}
-		}
+		mLastResponse.code = cTagNO;
+		mLastResponse.tag_msg = "The server does not answer as a CalDAV server at \"";
+		mLastResponse.tag_msg += actual_base_uri;
+		mLastResponse.tag_msg += "\" (no DAV header). Check the server and path of the account.";
+		CINETException fake_ex(CINETException::err_NoResponse);
+		INETDisplayError(fake_ex, "Error::Calendar::OSErrListCalendars", "Error::Calendar::NoBadListCalendars");
+		return false;
 	}
-	
-	return false;
+
+	bool no_preport = false;
+#ifdef NO_PRINCIPAL_REPORT
+	no_preport = (GetCalendarProtocol()->GetAccount()->GetName().find("nopreport") != cdstring::npos);
+#endif
+	if (no_preport)
+		return true;
+
+	if (GetSelfPrincipalResource(actual_base_uri, mPrincipalURI))
+	{
+		bool result = CWebDAVCalendarClient::Initialise(host, mPrincipalURI);
+		if (result)
+		{
+			// Get details from principal resource
+			_GetPrincipalDetails(mPrincipalURI, true);
+		}
+		return result;
+	}
+
+	// No principal: use the configured base URI
+	mPrincipalURI = cdstring::null_str;
+	return true;
 }
 
 void CCalDAVCalendarClient::_GetPrincipalDetails(const cdstring& puri, bool reset_home)
@@ -303,6 +320,11 @@ void CCalDAVCalendarClient::ListCalendars(CCalendarStoreNode* root, const http::
 	
 	cdstring relBase = nodeURL;
 	cdstring relBaseNoSlash = nodeURLNoSlash;
+
+	// Compare decoded paths: the server may encode its hrefs differently from
+	// the request URL (e.g. SOGo returns "@" where we send "%40")
+	relBase.DecodeURL();
+	relBaseNoSlash.DecodeURL();
 	
 	// Look at each propfind result and determine type of calendar
 	for(http::webdav::CWebDAVPropFindParser::CPropFindResults::const_iterator iter = parser.Results().begin(); iter != parser.Results().end(); iter++)
@@ -314,10 +336,10 @@ void CCalDAVCalendarClient::ListCalendars(CCalendarStoreNode* root, const http::
 		if (rpath.compare_start(mHostURL))
 			rpath.erase(0, mHostURL.length());
 		
-		// Ignore root
+		// Ignore root (the collection being listed)
+		rpath.DecodeURL();
 		if ((rpath == relBase) || (rpath == relBaseNoSlash))
 			continue;
-		rpath.DecodeURL();
 		
 		// Determine type of element
 		bool is_dir = false;
@@ -327,6 +349,7 @@ void CCalDAVCalendarClient::ListCalendars(CCalendarStoreNode* root, const http::
 		if ((*iter)->GetNodeProperties().count(http::webdav::cProperty_resourcetype.FullName()) != 0)
 		{
 			bool is_col = false;
+			bool is_calendar_type = false;
 
 			// Get the XML node for resourcetype
 			const xmllib::XMLNode* node = (*(*iter)->GetNodeProperties().find(http::webdav::cProperty_resourcetype.FullName())).second;
@@ -340,7 +363,10 @@ void CCalDAVCalendarClient::ListCalendars(CCalendarStoreNode* root, const http::
 				
 				// Look for calendar
 				if ((*iter2)->CompareFullName(http::caldav::cProperty_caldavcalendar))
+				{
 					is_cal = true;
+					is_calendar_type = true;
+				}
 				else if ((*iter2)->CompareFullName(http::caldav::cProperty_scheduleinbox))
 				{
 					is_cal = true;
@@ -356,6 +382,13 @@ void CCalDAVCalendarClient::ListCalendars(CCalendarStoreNode* root, const http::
 			
 			// Only allow calendar if also a collection
 			is_cal = is_cal && is_col;
+
+			// Some servers (e.g. SOGo) also use a regular calendar as the scheduling
+			// outbox: show it as a normal calendar instead of hiding it as an outbox.
+			// (The outbox used for scheduling comes from the principal's
+			// schedule-outbox-URL, not from this listing.)
+			if (is_outbox && is_calendar_type)
+				is_outbox = false;
 			
 			// Directory if a collection and not a calendar
 			is_dir = is_col && !is_cal;
@@ -899,6 +932,10 @@ void CCalDAVCalendarClient::_GetScheduleInboxOutbox(const CCalendarStoreNode& no
 		outboxURI = mCachedOutbox;
 		return;
 	}
+
+	// Without a principal (see Initialise) there is no inbox/outbox to find
+	if (mPrincipalURI.empty())
+		return;
 
 	// Get <DAV:principal-collection-set> property on root URI
 

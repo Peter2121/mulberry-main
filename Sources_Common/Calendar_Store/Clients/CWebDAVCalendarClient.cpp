@@ -316,6 +316,11 @@ void CWebDAVCalendarClient::ListCalendars(CCalendarStoreNode* root, const http::
 	cdstring relBase = nodeURL;
 	cdstring relBaseNoSlash = nodeURLNoSlash;
 
+	// Compare decoded paths: the server may encode its hrefs differently from
+	// the request URL (e.g. SOGo returns "@" where we send "%40")
+	relBase.DecodeURL();
+	relBaseNoSlash.DecodeURL();
+
 	// Look at each propfind result and determine type of calendar
 	for(http::webdav::CWebDAVPropFindParser::CPropFindResults::const_iterator iter = parser.Results().begin(); iter != parser.Results().end(); iter++)
 	{
@@ -326,10 +331,10 @@ void CWebDAVCalendarClient::ListCalendars(CCalendarStoreNode* root, const http::
 		if (rpath.compare_start(mHostURL))
 			rpath.erase(0, mHostURL.length());
 
-		// Ignore root
+		// Ignore root (the collection being listed)
+		rpath.DecodeURL();
 		if ((rpath == relBase) || (rpath == relBaseNoSlash))
 			continue;
-		rpath.DecodeURL();
 
 		// Strip off trailing .ics
 		if (rpath.compare_end(".ics"))
@@ -752,6 +757,14 @@ bool CWebDAVCalendarClient::_ReadFullCalendar(const CCalendarStoreNode& node, iC
 		if (acct == NULL)
 			return false;
 
+		// Only http: is plain text; https: and webcal: (served over HTTPS nowadays) use TLS
+		CINETAccount::ETLSType tls_type = (parsed.SchemeType() == CURL::eHTTP) ? CINETAccount::eNoTLS : CINETAccount::eSSL;
+
+		// An open connection to another server or with another scheme (e.g. left
+		// over from following a redirect) cannot be reused for this URL
+		if ((acct->GetServerIP() != parsed.Server()) || (acct->GetTLSType() != tls_type))
+			CloseConnection();
+
 		// Set server address
 		acct->SetServerIP(parsed.Server());
 		
@@ -762,10 +775,7 @@ bool CWebDAVCalendarClient::_ReadFullCalendar(const CCalendarStoreNode& node, iC
 		}
 
 		// Set TLS type
-		if ((parsed.SchemeType() == CURL::eHTTP) || (parsed.SchemeType() == CURL::eWebcal))
-			acct->SetTLSType(CINETAccount::eNoTLS);
-		else
-			acct->SetTLSType(CINETAccount::eSSL);
+		acct->SetTLSType(tls_type);
 		
 		rurl = parsed.Path();
 		
@@ -851,6 +861,16 @@ bool CWebDAVCalendarClient::_ReadFullCalendar(const CCalendarStoreNode& node, iC
 			// Ignore failure
 			return true;
 		default:
+			// The calendar itself was read successfully. For a web calendar this
+			// check only finds out whether it can be written back, and many servers
+			// refuse OPTIONS (e.g. 403, 405): treat that as read-only, without an
+			// error alert.
+			if (GetAccount()->GetServerType() == CINETAccount::eHTTPCalendar)
+			{
+				cal.SetReadOnly(true);
+				return true;
+			}
+
 			// Handle error and exit here
 			HandleHTTPError(optrequest.get());
 			return true;
@@ -876,14 +896,19 @@ void CWebDAVCalendarClient::_WriteFullCalendar(const CCalendarStoreNode& node, i
 		if (acct == NULL)
 			return;
 
+		// Only http: is plain text; https: and webcal: (served over HTTPS nowadays) use TLS
+		CINETAccount::ETLSType tls_type = (parsed.SchemeType() == CURL::eHTTP) ? CINETAccount::eNoTLS : CINETAccount::eSSL;
+
+		// An open connection to another server or with another scheme (e.g. left
+		// over from following a redirect) cannot be reused for this URL
+		if ((acct->GetServerIP() != parsed.Server()) || (acct->GetTLSType() != tls_type))
+			CloseConnection();
+
 		// Set server address
 		acct->SetServerIP(parsed.Server());
 		
 		// Set TLS type
-		if ((parsed.SchemeType() == CURL::eHTTP) || (parsed.SchemeType() == CURL::eWebcal))
-			acct->SetTLSType(CINETAccount::eNoTLS);
-		else
-			acct->SetTLSType(CINETAccount::eSSL);
+		acct->SetTLSType(tls_type);
 		
 		rurl = parsed.Path();
 		
@@ -1740,21 +1765,50 @@ void CWebDAVCalendarClient::RunSession(CHTTPRequestResponse* request)
 			if (!location.empty())
 			{
 				CURL parsed(location);
-				if (((parsed.SchemeType() == CURL::eHTTP) || (parsed.SchemeType() == CURL::eHTTPS)) && !parsed.Server().empty() && !parsed.Path().empty())
+
+				// A relative location ("/path") keeps the current server and scheme
+				bool relative = parsed.Server().empty() && (location.c_str()[0] == '/');
+				if (((parsed.SchemeType() == CURL::eHTTP) || (parsed.SchemeType() == CURL::eHTTPS)) && (relative || !parsed.Server().empty()) && !parsed.Path().empty())
 				{
-					// Get new server and base RURL
-					bool different_server = (mServerAddr != parsed.Server());
-					mServerAddr = parsed.Server();
-					mBaseRURL = parsed.Path();
-					
-					// Use new host in this session
-					if (different_server)
+					// Work out whether the server or the scheme (TLS) changes
+					bool current_tls = (GetAccount()->GetTLSType() == CINETAccount::eSSL) ||
+										(GetAccount()->GetTLSType() == CINETAccount::eSSLv3);
+					bool new_tls = relative ? current_tls : (parsed.SchemeType() == CURL::eHTTPS);
+					cdstring new_server = relative ? mServerAddr : parsed.Server();
+					bool different_server = (mServerAddr != new_server);
+					bool different_scheme = (new_tls != current_tls);
+
+					// Moving to another server or scheme means changing the connection
+					// settings. Only do that for a private account (web calendars):
+					// changing the user's own account here would rewrite their preferences.
+					if ((different_server || different_scheme) && (GetPrivateAccount() == NULL))
 					{
-						if (GetPrivateAccount() != NULL)
-							GetPrivateAccount()->SetServerIP(parsed.Server());
+						if (mAllowLog)
+						{
+							mLog.LogEntry("        <-------- HTTP REDIRECT NOT FOLLOWED (other server or scheme) -------->");
+							cdstring str("Location: ");
+							str += location;
+							mLog.AddEntry(str);
+						}
+						break;
+					}
+
+					// Get new server and base RURL
+					mServerAddr = new_server;
+					mBaseRURL = parsed.Path();
+
+					// Use new host and scheme in this session
+					if (different_server || different_scheme)
+					{
+						GetPrivateAccount()->SetServerIP(new_server);
+						if (different_scheme)
+							GetPrivateAccount()->SetTLSType(new_tls ? CINETAccount::eSSL : CINETAccount::eNoTLS);
+
+						// The open connection goes to the old server, port or TLS setting
+						CloseConnection();
 						SetHost(mServerAddr);
 					}
-					
+
 					// Reset the request with new info
 					request->SetRURI(parsed.Path());
 					request->ClearResponse();
@@ -2050,6 +2104,25 @@ void CWebDAVCalendarClient::ReadResponseData(CHTTPRequestResponse* request)
 	// Tell data we are using it
 	request->StartResponseData();
 
+	// Do CRLF -> lendl conversion for log
+	std::unique_ptr<CStreamFilter> filter(mAllowLog ? new CStreamFilter(new crlf_filterbuf(lendl), mLog.GetLog()) : NULL);
+
+	// Data that is not wanted goes to a counting stream that simply discards it
+	ctrbuf ctr;
+	std::ostream octr(&ctr);
+	std::ostream* output = request->GetResponseDataStream();
+
+	// A compressed body is one compressed stream for the whole response, however many
+	// chunks it arrives in: decode it with a single decompressor (discarded data is not decoded)
+	http::inflate_streambuf::EEncoding enc = http::inflate_streambuf::eNone;
+	if (output != NULL)
+		enc = static_cast<http::inflate_streambuf::EEncoding>(request->GetContentEncoding());
+	else
+		output = &octr;
+	if ((enc != http::inflate_streambuf::eNone) && mAllowLog)
+		mLog.AddEntry("        <-------- COMPRESSED BODY: DECOMPRESSED TEXT FOLLOWS -------->");
+	http::response_body body(*output, enc, filter.get());
+
 	// Special behaviour for chunked
 	if (request->GetChunked())
 	{
@@ -2057,51 +2130,31 @@ void CWebDAVCalendarClient::ReadResponseData(CHTTPRequestResponse* request)
 		unsigned long chunk_size = 0;
 		while((chunk_size = ReadResponseDataChunked(request)) != 0)
 		{
-			ReadResponseDataLength(request, chunk_size);
+			ReadResponseDataLength(body.stream(), body.raw_log(), chunk_size);
 		}
-		
+
 		// Read empty line
 		INETGetLine();
 	}
 	else
 	{
-		ReadResponseDataLength(request, request->GetContentLength());
+		ReadResponseDataLength(body.stream(), body.raw_log(), request->GetContentLength());
 	}
+
+	// Decode what is left (throws on corrupt compressed data)
+	body.finish();
 
 	// Tell data we are done using it
 	request->StopResponseData();
 }
 
-void CWebDAVCalendarClient::ReadResponseDataLength(CHTTPRequestResponse* request, unsigned long read_length)
+void CWebDAVCalendarClient::ReadResponseDataLength(std::ostream& output, std::ostream* log, unsigned long read_length)
 {
-	// Do CRLF -> lendl conversion for log
-	std::unique_ptr<CStreamFilter> filter(mAllowLog ? new CStreamFilter(new crlf_filterbuf(lendl), mLog.GetLog()) : NULL);
-
 	// Create network status item for % progress counter
 	CNetworkAttachProgress progress;
 
 	long length = read_length;
-	if (request->GetResponseDataStream() != NULL)
-	{
-		http::CHTTPRequestResponse::EContentEncoding enc = request->GetContentEncoding();
-		if (enc != http::CHTTPRequestResponse::eEncodingNone)
-		{
-			http::inflate_streambuf decompressor(*request->GetResponseDataStream(),
-				static_cast<http::inflate_streambuf::EEncoding>(enc));
-			std::ostream decompress_stream(&decompressor);
-			mStream->gettostream(decompress_stream, filter.get(), &length, &progress);
-		}
-		else
-			mStream->gettostream(*request->GetResponseDataStream(), filter.get(), &length, &progress);
-	}
-	else
-	{
-		// Create counting stream which allows us to simply discard the data read in
-		ctrbuf ctr;
-		std::ostream octr(&ctr);
-
-		mStream->gettostream(octr, filter.get(), &length, &progress);
-	}
+	mStream->gettostream(output, log, &length, &progress);
 }
 
 unsigned long CWebDAVCalendarClient::ReadResponseDataChunked(CHTTPRequestResponse* request)

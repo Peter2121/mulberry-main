@@ -21,10 +21,13 @@ Options examined: **JX 4.2** (current upstream), **EFL**, **FLTK 1.4**,
   XForms), but rich text with inline images must be built on top (section 7).
 - **Not recommended:** JX 4.2 (big port, still looks old) and EFL (C API,
   unstable C++ API, weak rich text).
+- **HTML mail display:** litehtml rather than Qt WebEngine, with either
+  toolkit. Measured: 25–47 MB versus 225–243 MB for the same mails, and 1.3 MB
+  of code versus a 209 MB library (section 9).
 
 All effort figures in this document are rough estimates for one experienced
 developer, with low confidence. A 1–2 week prototype would turn them into
-measurements (section 9).
+measurements (section 10).
 
 ## 2. Current state (measured)
 
@@ -230,6 +233,7 @@ cheapest of all options; the message view and composer are the most expensive.
   |---|---|
   | mailbox lists sorted, filtered and threaded on the server | model/view tables loading rows lazily (`QAbstractItemModel`) |
   | styled-run formatting engine | `QTextDocument`; `QTextBrowser`/`QTextEdit` for viewing and composing, with inline images |
+  | full HTML mail display | litehtml with a `QPainter` container (not Qt WebEngine: see section 9) |
   | dialog layouts | Qt Designer `.ui` files with HiDPI-safe layouts |
   | single-instance check (JX "MDI server") | `QLocalServer` |
   | custom drawing in calendar views, printing, drag and drop, clipboard | `QPainter`, `QPrinter`, Qt drag and drop, `QClipboard` |
@@ -331,6 +335,8 @@ cheapest of all options; the message view and composer are the most expensive.
   over Mulberry's current flattening to styled text; small and secure.
 - **Cons:** read-only; selection, copy and find must be added; incomplete CSS
   (fine for email's table layouts); not packaged on FreeBSD (vendor as a submodule).
+- **Measured footprint:** 1.3 MB of code; 25 MB for a small mail and 47 MB for a
+  large newsletter, including Pango/Cairo (section 9).
 - **Effort:** about 1–1.5 person-months, low risk.
 
 ### Option D: embed WebKitGTK (like Evolution's composer)
@@ -405,8 +411,8 @@ inline-image experience.
 
 **Total:** about 4–6 person-months for full WYSIWYG, or about 2 months for
 viewer plus Markdown composer. In Qt, the editor and viewer come almost free
-(`QTextEdit`/`QTextDocument` handle images; litehtml or Qt WebEngine for
-display). This rich-text work is the main reason FLTK's total effort ends up
+(`QTextEdit`/`QTextDocument` handle images; litehtml for HTML display, see
+section 9). This rich-text work is the main reason FLTK's total effort ends up
 close to Qt's.
 
 ## 8. Overall comparison
@@ -445,7 +451,78 @@ Flat frames, a new palette and a new icon set are possible in days, but that is
 effort spent on code that will be replaced, and it doesn't fix Unicode or
 HiDPI. At most, adjust default fonts.
 
-## 9. Proposed plan (Qt)
+## 9. HTML message viewer: litehtml vs Qt WebEngine (measured)
+
+Both toolkits need an engine to display HTML mail. The two realistic choices
+are **litehtml** (section 7, option C; usable with FLTK or Qt) and **Qt
+WebEngine** (Chromium, Qt only). Both were measured on 2026-11-20 on the
+development machine (FreeBSD 15.1, amd64).
+
+### Method
+
+- **Test mails:**
+  - a typical small HTML mail: 1.7 KB, paragraphs, a list, a quoted reply;
+  - a large newsletter: 83 KB, nested tables, a `<style>` block, inline
+    styles, rounded badges, 120 product blocks; laid out at 800×16,000 px.
+- **litehtml:** upstream master of 2026-11-20 (commit `efb0ec8`), built with
+  GCC 14 (`MinSizeRel`), statically linked with its upstream Cairo+Pango
+  container. Parse, lay out, and paint the visible 800×1000 viewport into a
+  Cairo image surface. The rendering was checked visually: CSS classes,
+  borders, rounded corners, colours, table layout and font shaping were correct.
+- **Qt WebEngine:** 6.11.2 from FreeBSD packages, a minimal `QWebEngineView`
+  (800×1000) calling `setHtml()`, measured 1.5 s after `loadFinished`, with
+  `QT_QPA_PLATFORM=offscreen` and GPU disabled
+  (`QTWEBENGINE_CHROMIUM_FLAGS=--disable-gpu`).
+- **Memory:** from `procstat -v` for the program and all its child processes:
+  private (anonymous) resident pages per process, plus file-backed pages
+  (shared libraries) counted once per file. Plain RSS sums would count
+  WebEngine's 209 MB library twice (it is mapped in both of its processes); they
+  gave 532–542 MB.
+
+### Results
+
+| | **litehtml** (Cairo/Pango) | **Qt WebEngine** (`QWebEngineView`) |
+|---|---|---|
+| Code added to the application | **1.3 MB**, statically linked (Pango/Cairo come with any desktop) | `libQt6WebEngineCore.so` alone **209 MB**; package 293 MiB |
+| Dependencies | litehtml (vendored) + Pango, Cairo, fontconfig | full dependency closure: 215 packages, 4.5 GB installed (Qt base and QML, ffmpeg, mesa, NSS, pipewire, …) |
+| Processes | 1, inside the application | 2: application + Chromium renderer (+1 GPU process when GPU is enabled) |
+| Memory, small mail | **25 MB** (7 MB private) | **225 MB** (44 MB private) |
+| Memory, large newsletter | **47 MB** (30 MB private) | **243 MB** (63 MB private) |
+| Time to display, small / large | 37 ms / 124 ms | 415 ms / 658 ms |
+
+For reference: a plain Qt Widgets window (a `QLabel`) measured the same way
+uses 34 MB, and Pango/Cairo/fontconfig drawing one paragraph uses 22 MB (peak
+RSS). Today's Mulberry (JX) uses about 100 MB in normal use.
+
+If another WebEngine application already runs on the desktop, its shared
+libraries are paid once system-wide, and WebEngine's additional cost drops to
+roughly its private 44–63 MB: still about 6× litehtml's.
+
+### Capabilities
+
+| | litehtml | Qt WebEngine |
+|---|---|---|
+| HTML/CSS | HTML + CSS 2.1, much of CSS 3 (flexbox, gradients, partial grid): enough for email, which is mostly table layouts with inline styles | complete modern web platform |
+| JavaScript | none, ideal for mail | present, must be disabled for mail |
+| Remote content / privacy | the application decides every image load (one `load_image` callback) | needs request interception (`QWebEngineUrlRequestInterceptor`) |
+| Security updates | small code base, but less fuzz-tested | Chromium: frequent security fixes, so Qt WebEngine updates are mandatory |
+| Selection, find, accessibility | to be written (selection/find about 1 person-month; no accessibility) | built in |
+| Platforms | wherever Cairo/Pango or a Qt painter is available | Qt platforms where Chromium builds; on FreeBSD it depends on the ports' patches |
+
+### Conclusion
+
+- **Use litehtml for displaying HTML mail**, with FLTK or Qt alike. It keeps
+  Mulberry in its current memory class; a WebEngine viewer would roughly
+  triple the footprint and bring Chromium's security-update cadence, for
+  features (JavaScript, web applications) a mail viewer must switch off anyway.
+- **In a Qt port,** litehtml draws through a small `QPainter`-based container
+  instead of Cairo/Pango (community Qt containers exist); the footprint stays
+  similar, with Qt's text stack replacing Pango.
+- **The only strong reason for WebEngine** would be a WYSIWYG composer using
+  HTML's editable mode (section 7, option D). Under Qt that is not needed:
+  `QTextEdit` covers composing.
+
+## 10. Proposed plan (Qt)
 
 0. **Preparation, independent of any toolkit (weeks):**
    - replace ACE in `Sources_Common` (13 files, threads and mutexes only) with
@@ -457,7 +534,8 @@ HiDPI. At most, adjust default fonts.
    - reimplement the Mulberry base classes (`CDialogDirector`, `CTable`,
      `CTextDisplay`, `CToolbar`, `CCommander`) on Qt;
    - build a read-only three-pane window (accounts, mailbox list, message view)
-     on the existing `*Common` logic, to prove the architecture early.
+     on the existing `*Common` logic, to prove the architecture early; HTML
+     messages are displayed with litehtml (section 9).
 2. **Composer** (`QTextEdit`, with inline images), drag and drop, menus and
    toolbars mapped onto `QAction`.
 3. **Dialogs:** a converter from `.fd` to Qt Designer `.ui` for the 208 layout
@@ -473,7 +551,7 @@ showing the mailbox list from a real IMAP account, and a prototype `.fd` →
 If FLTK is chosen instead, the same steps 0 and 1 apply, with a `.fd` → `.fl`
 converter in step 3 and the rich-text path of section 7.
 
-## 10. Sources
+## 11. Sources
 
 - [JX Application Framework (GitHub)](https://github.com/jafl/jx_application_framework), [libjx on SourceForge (licence)](https://sourceforge.net/projects/libjx/)
 - [Qt 6.12 LTS released (Phoronix)](https://www.phoronix.com/news/Qt-6.12-LTS-Released), [FreshPorts devel/qt6](https://www.freshports.org/devel/qt6/)
@@ -484,3 +562,5 @@ converter in step 3 and the rich-text path of section 7.
 - Verified locally: Mulberry sources, JX 4.2 upstream, FLTK 1.4.5 sources (tag
   `release-1.4.5`), litehtml upstream, installed EFL 1.29 and Pango headers,
   FreeBSD package listings.
+- Measured locally (section 9): litehtml upstream commit `efb0ec8` with its
+  Cairo+Pango container, Qt WebEngine 6.11.2 from FreeBSD packages.

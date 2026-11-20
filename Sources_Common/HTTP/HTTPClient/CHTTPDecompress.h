@@ -30,6 +30,7 @@
 #include <zstd.h>
 #endif
 
+#include <memory>
 #include <ostream>
 #include <streambuf>
 
@@ -80,6 +81,66 @@ private:
 	void FlushZlib();
 	void FlushBrotli();
 	void FlushZstd();
+};
+
+// Writes everything to a main stream and, if not NULL, a second one
+class tee_streambuf : public std::streambuf
+{
+public:
+	tee_streambuf(std::ostream& output, std::ostream* copy)
+		: mOutput(output), mCopy(copy) {}
+
+protected:
+	virtual int overflow(int c);
+	virtual std::streamsize xsputn(const char* s, std::streamsize n);
+	virtual int sync();
+
+private:
+	std::ostream&	mOutput;
+	std::ostream*	mCopy;
+};
+
+// Destination for the body of one HTTP response.
+//
+// A compressed body is a single compressed stream, however many chunks it
+// arrives in (Transfer-Encoding: chunked), so it must go through one
+// decompressor for the whole response. Raw bytes from the network are written
+// to stream(); raw_log() is the stream to log those raw bytes to. For a
+// compressed body raw_log() is NULL and the decompressed text is written to the
+// log instead, so protocol logs stay readable.
+//
+// Call finish() after the last byte: it decodes what is left and throws
+// CGeneralException if the compressed data was corrupt. (std::ostream turns
+// exceptions thrown while writing into badbit, so errors would otherwise be
+// silently lost and the body truncated.)
+class response_body
+{
+public:
+	response_body(std::ostream& output, inflate_streambuf::EEncoding encoding, std::ostream* log);
+
+	std::ostream& stream()
+	{
+		return mDecoderStream ? *mDecoderStream : mOutput;
+	}
+	std::ostream* raw_log() const
+	{
+		return mDecoder ? NULL : mLog;
+	}
+
+	void finish();
+
+private:
+	std::ostream&						mOutput;
+	std::ostream*						mLog;
+
+	// Declaration order matters: the decoder writes into the tee, so it must be destroyed first
+	std::unique_ptr<tee_streambuf>		mTee;
+	std::unique_ptr<std::ostream>		mTeeStream;
+	std::unique_ptr<inflate_streambuf>	mDecoder;
+	std::unique_ptr<std::ostream>		mDecoderStream;
+
+	response_body(const response_body&);
+	response_body& operator=(const response_body&);
 };
 
 }	// namespace http

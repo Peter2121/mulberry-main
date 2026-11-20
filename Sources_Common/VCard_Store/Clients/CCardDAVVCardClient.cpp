@@ -106,43 +106,60 @@ CINETClient* CCardDAVVCardClient::CloneConnection()
 
 #pragma mark ____________________________Protocol
 
-// For CardDAV we need to do this twice - once on the base URI passed in, and then,
-// if we know access control is supported, a second time on the principal resource
-// which we know must indicate caldav capability levels.
+// For CardDAV we need to do this twice - once on the base URI passed in, and then
+// a second time on the principal resource, which we know must indicate carddav
+// capability levels. The principal is found with DAV:current-user-principal
+// (RFC 5397), which does not need access control support: servers that do not
+// advertise "access-control" (e.g. Radicale) must work too. If no principal can
+// be found, the base URI configured in the account is used as it is.
 bool CCardDAVVCardClient::Initialise(const cdstring& host, const cdstring& base_uri)
 {
 	cdstring actual_base_uri = base_uri;
 	if (actual_base_uri.length() == 0)
 		actual_base_uri = "/";
-	
-	if (CWebDAVVCardClient::Initialise(host, actual_base_uri) && HasDAVACL())
+
+	if (!CWebDAVVCardClient::Initialise(host, actual_base_uri))
+		return false;
+
+	// A web server answers any address, e.g. with an HTML page. Without a DAV
+	// header this is not a CardDAV location (typically a wrong path): say so
+	// instead of carrying on with an empty list.
+	if (!HasDAV())
 	{
-		bool no_preport = false;
+		mLastResponse.code = cTagNO;
+		mLastResponse.tag_msg = "The server does not answer as a CardDAV server at \"";
+		mLastResponse.tag_msg += actual_base_uri;
+		mLastResponse.tag_msg += "\" (no DAV header). Check the server and path of the account.";
+		CINETException fake_ex(CINETException::err_NoResponse);
+		INETDisplayError(fake_ex, "Error::IMSP::OSErrAddressBooks", "Error::IMSP::NoBadAddressBooks");
+		return false;
+	}
+
+	bool no_preport = false;
 #ifdef NO_PRINCIPAL_REPORT
-		no_preport = (GetAccount()->GetName().find("nopreport") != cdstring::npos);
+	no_preport = (GetAccount()->GetName().find("nopreport") != cdstring::npos);
 #endif
-		if (no_preport)
-			return true;
-		else
+	if (no_preport)
+		return true;
+
+	if (GetSelfPrincipalResource(actual_base_uri, mPrincipalURI))
+	{
+		bool result = CWebDAVVCardClient::Initialise(host, mPrincipalURI);
+		if (result)
 		{
-			if (GetSelfPrincipalResource(actual_base_uri, mPrincipalURI))
+			// May need to reset addressbook-home path
+			if (GetAdbkOwner()->GetAddressAccount()->GetBaseRURL().empty())
 			{
-				bool result = CWebDAVVCardClient::Initialise(host, mPrincipalURI);
-				if (result)
-				{
-					// May need to reset calendar-home path
-					if (GetAdbkOwner()->GetAddressAccount()->GetBaseRURL().empty())
-					{
-						// Get calendar-home-set from principal resource
-						_GetPrincipalDetails(mPrincipalURI, true);
-					}
-				}
-				return result;
+				// Get addressbook-home-set from principal resource
+				_GetPrincipalDetails(mPrincipalURI, true);
 			}
 		}
+		return result;
 	}
-	
-	return false;
+
+	// No principal: use the configured base URI
+	mPrincipalURI = cdstring::null_str;
+	return true;
 }
 
 void CCardDAVVCardClient::_GetPrincipalDetails(const cdstring& puri, bool reset_home)
@@ -268,6 +285,11 @@ void CCardDAVVCardClient::ListAddressBooks(CAddressBook* root, const http::webda
 	cdstring relBase = nodeURL;
 	cdstring relBaseNoSlash = nodeURLNoSlash;
 
+	// Compare decoded paths: the server may encode its hrefs differently from
+	// the request URL (e.g. SOGo returns "@" where we send "%40")
+	relBase.DecodeURL();
+	relBaseNoSlash.DecodeURL();
+
 	// Look at each propfind result and determine type of address book
 	for(http::webdav::CWebDAVPropFindParser::CPropFindResults::const_iterator iter = parser.Results().begin(); iter != parser.Results().end(); iter++)
 	{
@@ -278,10 +300,10 @@ void CCardDAVVCardClient::ListAddressBooks(CAddressBook* root, const http::webda
 		if (rpath.compare_start(mHostURL))
 			rpath.erase(0, mHostURL.length());
 		
-		// Ignore root
+		// Ignore root (the collection being listed)
+		rpath.DecodeURL();
 		if ((rpath == relBase) || (rpath == relBaseNoSlash))
 			continue;
-		rpath.DecodeURL();
 
 		// Determine type of element
 		bool is_dir = false;

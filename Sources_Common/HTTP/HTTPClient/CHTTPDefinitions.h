@@ -96,6 +96,7 @@ enum
 	eStatus_NotModified = 304,
 	eStatus_UseProxy = 305,
 	eStatus_TemporaryRedirect = 307,
+	eStatus_PermanentRedirect = 308,
 	eStatus_BadRequest = 400,
 	eStatus_Unauthorized = 401,
 	eStatus_PaymentRequired = 402,

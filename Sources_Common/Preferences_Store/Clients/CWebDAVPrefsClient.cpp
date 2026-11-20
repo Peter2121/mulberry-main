@@ -829,6 +829,25 @@ void CWebDAVPrefsClient::ReadResponseData(CHTTPRequestResponse* request)
 	// Tell data we are using it
 	request->StartResponseData();
 
+	// Do CRLF -> lendl conversion for log
+	std::unique_ptr<CStreamFilter> filter(mAllowLog ? new CStreamFilter(new crlf_filterbuf(lendl), mLog.GetLog()) : NULL);
+
+	// Data that is not wanted goes to a counting stream that simply discards it
+	ctrbuf ctr;
+	std::ostream octr(&ctr);
+	std::ostream* output = request->GetResponseDataStream();
+
+	// A compressed body is one compressed stream for the whole response, however many
+	// chunks it arrives in: decode it with a single decompressor (discarded data is not decoded)
+	http::inflate_streambuf::EEncoding enc = http::inflate_streambuf::eNone;
+	if (output != NULL)
+		enc = static_cast<http::inflate_streambuf::EEncoding>(request->GetContentEncoding());
+	else
+		output = &octr;
+	if ((enc != http::inflate_streambuf::eNone) && mAllowLog)
+		mLog.AddEntry("        <-------- COMPRESSED BODY: DECOMPRESSED TEXT FOLLOWS -------->");
+	http::response_body body(*output, enc, filter.get());
+
 	// Special behaviour for chunked
 	if (request->GetChunked())
 	{
@@ -836,51 +855,31 @@ void CWebDAVPrefsClient::ReadResponseData(CHTTPRequestResponse* request)
 		unsigned long chunk_size = 0;
 		while((chunk_size = ReadResponseDataChunked(request)) != 0)
 		{
-			ReadResponseDataLength(request, chunk_size);
+			ReadResponseDataLength(body.stream(), body.raw_log(), chunk_size);
 		}
-		
+
 		// Read empty line
 		INETGetLine();
 	}
 	else
 	{
-		ReadResponseDataLength(request, request->GetContentLength());
+		ReadResponseDataLength(body.stream(), body.raw_log(), request->GetContentLength());
 	}
+
+	// Decode what is left (throws on corrupt compressed data)
+	body.finish();
 
 	// Tell data we are done using it
 	request->StopResponseData();
 }
 
-void CWebDAVPrefsClient::ReadResponseDataLength(CHTTPRequestResponse* request, unsigned long read_length)
+void CWebDAVPrefsClient::ReadResponseDataLength(std::ostream& output, std::ostream* log, unsigned long read_length)
 {
-	// Do CRLF -> lendl conversion for log
-	std::unique_ptr<CStreamFilter> filter(mAllowLog ? new CStreamFilter(new crlf_filterbuf(lendl), mLog.GetLog()) : NULL);
-
 	// Create network status item for % progress counter
 	CNetworkAttachProgress progress;
 
 	long length = read_length;
-	if (request->GetResponseDataStream() != NULL)
-	{
-		http::CHTTPRequestResponse::EContentEncoding enc = request->GetContentEncoding();
-		if (enc != http::CHTTPRequestResponse::eEncodingNone)
-		{
-			http::inflate_streambuf decompressor(*request->GetResponseDataStream(),
-				static_cast<http::inflate_streambuf::EEncoding>(enc));
-			std::ostream decompress_stream(&decompressor);
-			mStream->gettostream(decompress_stream, filter.get(), &length, &progress);
-		}
-		else
-			mStream->gettostream(*request->GetResponseDataStream(), filter.get(), &length, &progress);
-	}
-	else
-	{
-		// Create counting stream which allows us to simply discard the data read in
-		ctrbuf ctr;
-		std::ostream octr(&ctr);
-
-		mStream->gettostream(octr, filter.get(), &length, &progress);
-	}
+	mStream->gettostream(output, log, &length, &progress);
 }
 
 unsigned long CWebDAVPrefsClient::ReadResponseDataChunked(CHTTPRequestResponse* request)

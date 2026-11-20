@@ -343,7 +343,10 @@ void CHTTPRequestResponse::CacheHeaders()
 	if (mHeaders.count(cHeaderContentEncoding))
 	{
 		cdstring value = (*mHeaders.find(cHeaderContentEncoding)).second;
-		if (value.compare("gzip", true) == 0 || value.compare("x-gzip", true) == 0)
+		value.trimspace();
+		if (value.empty() || (value.compare("identity", true) == 0))
+			mContentEncoding = eEncodingNone;
+		else if (value.compare("gzip", true) == 0 || value.compare("x-gzip", true) == 0)
 			mContentEncoding = eEncodingGzip;
 		else if (value.compare("deflate", true) == 0 || value.compare("x-deflate", true) == 0)
 			mContentEncoding = eEncodingDeflate;
@@ -395,7 +398,8 @@ bool CHTTPRequestResponse::IsRedirect() const
 		// Only these are allowed
 		return (mStatusCode == eStatus_MovedPermanently) ||
 				(mStatusCode == eStatus_Found) ||
-				(mStatusCode == eStatus_TemporaryRedirect);
+				(mStatusCode == eStatus_TemporaryRedirect) ||
+				(mStatusCode == eStatus_PermanentRedirect);
 	
 	// WebDAV/CalDAV allowed
 	case eRequest_MKCOL:
@@ -409,7 +413,8 @@ bool CHTTPRequestResponse::IsRedirect() const
 	case eRequest_MKCALENDAR:
 		// Only these are allowed
 		return (mStatusCode == eStatus_MovedPermanently) ||
-				(mStatusCode == eStatus_Found);
+				(mStatusCode == eStatus_Found) ||
+				(mStatusCode == eStatus_PermanentRedirect);
 	
 	default:
 		// Nothing else can redirect
