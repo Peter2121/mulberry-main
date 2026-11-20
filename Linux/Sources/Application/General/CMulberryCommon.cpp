@@ -49,9 +49,9 @@ cdstring FilterUTF8ForDisplay(const char* txt)
 		const unsigned char* start = p;
 		wchar_t wc = utf8.c_2_w(p);
 
-		if (IsLatin1(wc) || IsEuroSign(wc))
+		if (IsDirectlyDisplayable(wc))
 		{
-			// Copy original UTF-8 bytes (not raw Latin-1)
+			// Letters of any script: copy original UTF-8 bytes
 			result.append((const char*)start, p - start);
 		}
 		else if (IsUnicodeLineSeparator(wc))

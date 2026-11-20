@@ -59,6 +59,27 @@ inline bool IsEuroSign(wchar_t wc)
 	return wc == 0x20AC;
 }
 
+// Characters drawn as they are: letters and marks of every script in the
+// Basic Multilingual Plane (Latin, Greek, Cyrillic, CJK, ...). JX draws
+// Unicode text through Xft, so they need no substitution as long as the font
+// has the glyphs. Still substituted by the callers: invisible formatting
+// characters, punctuation and symbols U+2000-U+2BFF (typographic substitutes,
+// arrows, dingbats, ...), which fonts often lack, variation selectors,
+// specials, and everything beyond U+FFFF (emoji, mathematical letters), which
+// the 16-bit text widgets cannot hold.
+inline bool IsDirectlyDisplayable(wchar_t wc)
+{
+	if (IsLatin1(wc) || IsEuroSign(wc))
+		return true;
+	if (IsInvisibleUnicode(wc) || IsZeroWidthSeparator(wc) || IsUnicodeLineSeparator(wc))
+		return false;
+	return (wc < 0x10000) &&
+		   !((wc >= 0x2000) && (wc < 0x2C00)) &&	// punctuation, symbols, arrows, dingbats
+		   !((wc >= 0xD800) && (wc < 0xE000)) &&	// surrogates
+		   !((wc >= 0xFE00) && (wc < 0xFE10)) &&	// variation selectors
+		   (wc < 0xFFF0);							// specials
+}
+
 // Characters above the maximum valid Unicode codepoint
 inline bool IsInvalidUnicode(wchar_t wc)
 {
