@@ -203,8 +203,9 @@ X11 only, and depend on a toolkit with essentially one maintainer.
      the whole text double-spaced.
    - No inline images, no paragraph alignment or indentation, no tables.
    - Styles are a table indexed by one byte per character.
-   - `Fl_Help_View` supports only an HTML 3.2-style subset (no CSS, `DIV`,
-     `SPAN`, `BLOCKQUOTE`).
+   - `Fl_Help_View` supports only "most HTML 2.0 elements" (37 tags): no CSS,
+     no `DIV`, `SPAN` or `BLOCKQUOTE`, one table level only (section 7,
+     option G).
    - See section 7 for the ways around this.
 2. **Missing glyphs on X11.** Without Pango (as in the FreeBSD package), the X11
    path draws each string with **one** Xft font and no per-character fallback,
@@ -375,10 +376,111 @@ cheapest of all options; the message view and composer are the most expensive.
 
 ### Option G: extend `Fl_Help_View` (stopgap viewer)
 
-- FLTK's HTML-3.2-style viewer (3,767 lines) already supports `IMG` and `TABLE`;
-  no CSS, no editing.
-- Fine as an interim viewer; extending it seriously reinvents litehtml.
-- **Effort:** 1–2 weeks.
+*Analysed 2026-11-21 against the FLTK documentation and the `Fl_Help_View`
+source of FLTK 1.4.5 (tag `release-1.4.5`) and of the 1.5 development branch
+(commit `a28e392`, 2026-11-21).*
+
+**Summary:**
+- `Fl_Help_View` **cannot be extended by subclassing**: its parsing and
+  layout are private and non-virtual in 1.4, and hidden behind a private
+  implementation class in 1.5. The only route is a **copy (fork) of the widget's
+  source** inside Mulberry.
+- A fork can reach **conversational HTML mail** (replies, simple formatting,
+  inline images) in **about 5–7 weeks**.
+- It cannot reasonably reach **real-world HTML mail** (Outlook, newsletters):
+  that needs CSS, nested tables and a box model, i.e. rewriting the widget's
+  core into a new HTML engine, which is what litehtml (option C) already is.
+
+#### What the widget supports (verified in the source)
+
+The documentation describes it as supporting "most HTML 2.0 elements" plus "a
+primitive implementation of tables".
+
+| | Supported |
+|---|---|
+| Tags (37) | A, B, BODY, BR, CENTER, CODE, DD, DL, DT, EM, FONT, H1–H6, HEAD, HR, I, IMG, KBD, LI, OL, P, PRE, STRONG, TABLE, TD, TH, TITLE, TR, TT, U, UL, VAR |
+| Attributes (16) | ALIGN, ALT, BGCOLOR, BORDER, COLOR, COLSPAN, FACE, HEIGHT, HREF, LINK, NAME, SIZE, SRC, START, TEXT, WIDTH |
+| CSS | **none**: no `style` attribute, no `<style>` block |
+| Entities | 89 Latin-1 names and numeric references; any other named entity is printed literally |
+| Images | GIF/JPEG/PNG **from files only**: `src` → local path via the link callback → `Fl_Shared_Image` |
+| Tables | one level only; no ROWSPAN, CELLPADDING, CELLSPACING or VALIGN; up to 200 columns |
+| Built in | text selection, copy, find, links, named anchors, scrolling |
+
+Other observed behaviour:
+- Text inside `<HEAD>` is suppressed and comments are skipped, but the
+  **content of unknown elements is drawn as text**: a `<style>` block in the
+  body (common in newsletters and forwarded mail) or a `<script>` appears on
+  screen as CSS or code.
+- UTF-8 text is handled; glyph fallback depends on how FLTK is built (Pango,
+  see section 5).
+- The 1.5 branch refactors the code (private `Impl` class, standard
+  containers) but supports the same tags and attributes.
+
+#### What real HTML mail needs, and what is missing
+
+| Needed for | Feature | In `Fl_Help_View` |
+|---|---|---|
+| Almost every mail (Gmail wraps everything in `<div dir="ltr">`, Outlook in `<div class=WordSection1>`) | **DIV, SPAN** | ✗: tag ignored; DIV does not even break the line |
+| Replies (Gmail, Thunderbird `type=cite`, Apple Mail) | **BLOCKQUOTE**, usually with a `border-left` style | ✗: quoted text not indented |
+| Almost every mail | **Inline `style`**: color, background-color, font-family/size/weight/style, text-decoration, text-align, line-height, margin/padding, width, `display:none` (hidden preview text) | ✗ |
+| Outlook, newsletters | **`<style>` blocks** with class selectors (`MsoNormal`, …) | ✗, and the CSS text is shown when the block is in the body |
+| Every newsletter, many signatures | **Nested tables**, CELLPADDING/CELLSPACING, VALIGN, percentage widths, cell backgrounds | ✗: one table level only (single table state in `format()`) |
+| Common text markup | S/STRIKE/DEL, SUB/SUP, SMALL/BIG, TBODY/THEAD, CITE, Q | ✗ |
+| Typography | `&rsquo; &ldquo; &mdash; &hellip; &euro; &bull; &zwnj;` | ✗: shown as raw `&rsquo;` |
+| Embedded images | `cid:` (message parts), `data:` URIs, blocking remote images | ✗: files only (`cid:`/`data:` could be faked with temporary files via the link callback) |
+| Security | ignore `<script>`, forms, `<iframe>` | partly: no JavaScript, but a script's content is shown as text |
+
+#### Why a fork is hard to extend
+
+The widget has **no document tree and no style model**:
+- `format()` (838 lines) parses the raw HTML text and lays it out in a single
+  pass, with one `if … else if` chain per tag (86 tag tests);
+- `draw()` (547 lines) **parses the same HTML text again** (55 tag tests) to
+  draw it;
+- `format_table()` (417 lines) pre-scans tables for column widths (58 tag
+  tests), and stops at an inner `<TABLE>`;
+- styling is only a stack of *(font, size, colour)*.
+
+Every new feature must therefore be added consistently in two or three places.
+Anything CSS-like (margins, padding, borders and backgrounds per element,
+inherited styles) has nowhere to live: it needs an element tree with computed
+styles, which is the core of an HTML engine.
+
+#### Effort for a forked widget (`CHTMLView`, copied from `Fl_Help_View`)
+
+| Level | Content | Effort |
+|---|---|---|
+| **1. Conversational mail** (replies, simple formatting, signatures) | DIV/SPAN/BLOCKQUOTE (indent + quote bar), S/SUB/SUP/SMALL/BIG/TBODY…; suppress `<style>`/`<script>` content; full HTML5 entity table; inline `style` subset mapped to the font stack and block colours (color, background, font, text-decoration, text-align, `display:none`); `cid:`/`data:` images decoded in memory (FLTK 1.4 image classes accept memory buffers); remote-image blocking | **~5–7 weeks** |
+| **2. Business / Outlook mail** | nested tables (table state as a stack in all three functions: a major refactor); CELLPADDING/SPACING/VALIGN/percentages; `<style>` blocks with simple selectors (tag, `.class`, `#id`); basic margins, padding, line-height | **+2–3 months** |
+| **3. Newsletters** | full box model, borders and backgrounds per element, max-width, inline-block, floats, background images, media queries | rewriting the engine: not sensible |
+
+Other costs:
+- The fork no longer receives upstream fixes. Upstream is restructuring this
+  very widget for 1.5, so a fork of 1.4 diverges immediately.
+- The copied file stays under FLTK's LGPL (with its static-linking exception)
+  inside the Apache-licensed project: legal, but a separately licensed file.
+
+**Cheaper intermediate:** keep the stock widget and **pre-process** the mail in
+Mulberry: convert inline styles to `FONT/B/I/U`, DIV to P/BR, entities to
+numeric references; remove `<style>`/`<script>` and hidden elements; map `cid:`
+images to temporary files. That gets about half of level 1 in **~2–3 weeks**, but
+cannot fix nested tables or layout.
+
+#### Comparison with litehtml (option C)
+
+| | Fork of `Fl_Help_View` | litehtml |
+|---|---|---|
+| Replies and simple mail | ✓ after level 1 (~5–7 weeks) | ✓ |
+| Outlook / business mail | after level 2 (+2–3 months), still approximate | ✓ (CSS 2.1, nested tables, `<style>`) |
+| Newsletters | ✗ | ✓ (section 9: 120-block newsletter) |
+| Selection, copy, find | ✓ built in | to be written (~3 weeks) |
+| Upstream maintenance | none (own fork) | active upstream |
+| Total for good results | ~3–4 months, still limited | ~1.5–2 months, full result |
+
+**Conclusion:** option G only makes sense as a **short-term stopgap**
+(pre-processing, or level 1) if an FLTK port must show something quickly. For a
+viewer that displays HTML mail correctly, litehtml remains clearly cheaper, and
+it works with FLTK too, through its Cairo+Pango container.
 
 ### Option H: external editor (complement only)
 
@@ -395,7 +497,7 @@ inline-image experience.
 | D: WebKitGTK | view + edit | ✓ | ✓ | ✓ | ✓ | about 180 MiB, GTK | ✗ (X11 only) | 2–3 person-months, ongoing pain | high |
 | E: Skia | view + edit | ✓ | ✓ | ~ | ✓ | Skia, ICU | ✓ | 4–6 person-months | medium-high |
 | **F: Markdown + preview** | edit | ✗ | ✓ | (via C/B) | ✓ | `md4c` | ✓ | 2–4 weeks | low |
-| G: `Fl_Help_View` | view (stopgap) | ✗ | ✓ | ~ (HTML 3.2) | X11 issues | none | ✓ | 1–2 weeks | low |
+| G: `Fl_Help_View` | view (stopgap) | ✗ | ~ (files only; `cid:`/`data:` need work) | ✗ (HTML 2.0, no CSS, one table level) | X11 issues | none (fork for level 1+) | ✓ | 2–3 weeks pre-processing; 5–7 weeks level 1 | low (stopgap) / high (beyond) |
 
 ### Recommended rich-text path if FLTK is chosen
 
@@ -557,6 +659,7 @@ converter in step 3 and the rich-text path of section 7.
 - [Qt 6.12 LTS released (Phoronix)](https://www.phoronix.com/news/Qt-6.12-LTS-Released), [FreshPorts devel/qt6](https://www.freshports.org/devel/qt6/)
 - [Enlightenment 0.28 / EFL 1.29 (OMG! Ubuntu)](https://www.omgubuntu.co.uk/2026/11/enlightenment-0-28-features), [EFL news](https://enlightenment.org/news)
 - [FLTK roadmap](https://www.fltk.org/roadmap.php), [FLTK 1.4.5 release announcement](https://groups.google.com/g/fltkcoredev/c/_oY4fKlTYxw), [RFC: FLTK 1.4 maintenance mode and 1.5 development](https://groups.google.com/g/fltkcoredev/c/7oADtBkmLGw), [FLTK 1.4 text editor documentation](https://www.fltk.org/doc-1.4/editor.html)
+- [FLTK 1.4 `Fl_Help_View` documentation](https://www.fltk.org/doc-1.4/classFl__Help__View.html), [FLTK 1.5 `Fl_Help_View` documentation](https://www.fltk.org/doc-1.5/classFl__Help__View.html)
 - [litehtml (GitHub)](https://github.com/litehtml), [litehtml attribution in Qt 6 docs](https://doc.qt.io/qt-6/qtassistant-attribution-litehtml.html)
 - [wxWidgets 3.3.0 released](https://www.wxwidgets.org/news/2025/06/wxwidgets-3.3.0-released/), [wxWidgets MFC porting guide](https://www.wxwidgets.org/news/2023/10/mfc-porting-guide)
 - Verified locally: Mulberry sources, JX 4.2 upstream, FLTK 1.4.5 sources (tag
@@ -564,3 +667,5 @@ converter in step 3 and the rich-text path of section 7.
   FreeBSD package listings.
 - Measured locally (section 9): litehtml upstream commit `efb0ec8` with its
   Cairo+Pango container, Qt WebEngine 6.11.2 from FreeBSD packages.
+- Verified locally (section 7, option G): `Fl_Help_View` source of FLTK 1.4.5
+  (tag `release-1.4.5`) and of the 1.5 development branch (commit `a28e392`).
