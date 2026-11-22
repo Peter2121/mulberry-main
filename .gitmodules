@@ -1,24 +1,24 @@
 [submodule "Libraries/CICalendar"]
 	path = Libraries/CICalendar
-	url = git@github.com:yitzhaq/mulberry-lib-cicalendar.git
+	url = git@github.com:Peter2121/mulberry-lib-cicalendar.git
 [submodule "Libraries/vCard"]
 	path = Libraries/vCard
-	url = git@github.com:yitzhaq/mulberry-lib-vcard.git
+	url = git@github.com:Peter2121/mulberry-lib-vcard.git
 [submodule "Libraries/XMLLib"]
 	path = Libraries/XMLLib
-	url = git@github.com:yitzhaq/mulberry-lib-xmllib.git
+	url = git@github.com:Peter2121/mulberry-lib-xmllib.git
 [submodule "Libraries/JX"]
 	path = Libraries/JX
 	url = git@github.com:Peter2121/mulberry-lib-jx.git
 [submodule "Libraries/vendor/open-powerplant"]
 	path = Libraries/vendor/open-powerplant
-	url = git@github.com:yitzhaq/mulberry-vendor-open-powerplant.git
+	url = git@github.com:Peter2121/mulberry-vendor-open-powerplant.git
 [submodule "Libraries/vendor/MoreFiles"]
 	path = Libraries/vendor/MoreFiles
-	url = git@github.com:yitzhaq/mulberry-vendor-morefiles.git
+	url = git@github.com:Peter2121/mulberry-vendor-morefiles.git
 [submodule "Libraries/vendor/MoreFilesX"]
 	path = Libraries/vendor/MoreFilesX
-	url = git@github.com:yitzhaq/mulberry-vendor-morefilesx.git
+	url = git@github.com:Peter2121/mulberry-vendor-morefilesx.git
 [submodule "Libraries/vzic"]
 	path = Libraries/vzic
-	url = https://github.com/yitzhaq/mulberry-vendor-vzic.git
+	url = https://github.com/Peter2121/mulberry-vendor-vzic.git
