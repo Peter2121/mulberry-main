@@ -67,7 +67,7 @@ public:
 class Document
 {
 public:
-	enum class Status
+	enum class Result		// not "Status": Xlib defines it as a macro
 	{
 		Ok,
 		Empty,			// no HTML given
@@ -86,7 +86,7 @@ public:
 	// Parses the HTML.  charset: the encoding of html; Mulberry passes
 	// "utf-8" (parts are decoded already).  An empty charset means: detect it
 	// (byte order mark or <meta charset>, else UTF-8), as a browser does.
-	Status Load(const std::string& html, const std::string& charset = "utf-8");
+	Result Load(const std::string& html, const std::string& charset = "utf-8");
 
 	// Lays the document out for a width in pixels; returns its height
 	int Layout(int width);
@@ -101,7 +101,7 @@ public:
 	// context's coordinates too.
 	void Draw(cairo_t* cr, int x, int y, const Rect& clip);
 
-	static const char* StatusText(Status status);
+	static const char* ResultText(Result result);
 
 private:
 	struct Impl;

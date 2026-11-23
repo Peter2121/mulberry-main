@@ -55,6 +55,7 @@ class CSimpleTitleTable;
 class CSplitterView;
 class CToolbarButton;
 class CFormattedTextDisplay;
+class CHTMLDisplay;
 
 class JXFlatRect;
 class JXImageWidget;
@@ -170,6 +171,8 @@ private:
 
     CFocusBorder*        	mTextFocus;
 	CFormattedTextDisplay*	mText;
+	CHTMLDisplay*			mHTML;						// HTML view ("Format: as HTML"); NULL without the HTML viewer
+	bool					mHTMLShown;					// HTML view shown instead of mText
 
 	bool			mRedisplayBlock;					// Prevent redisplay
 	bool			mResetTextBlock;					// Prevent ResetText execution
@@ -228,6 +231,9 @@ public:
 
 			void	Text2UTF16(i18n::ECharsetCode charset);	// Convert text to utf16
 			void	ResetText();							// Reset message text
+			void	SetParsing(EView view);					// Change the view mode and its popup
+			void	ShowHTML(bool show);					// Show the HTML view instead of the text, or the text
+			void	FocusText();							// Focus the message text (text or HTML view)
 			void	ResetFontScale();						// Reset font scale text
 			void	ResetCaption();							// Reset message caption
 			void	ResetOptions();							// Mail view options changed

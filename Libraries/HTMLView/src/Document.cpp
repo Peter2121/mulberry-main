@@ -93,19 +93,19 @@ Document::~Document()
 	mImpl->mDocument.reset();
 }
 
-Document::Status Document::Load(const std::string& html, const std::string& charset)
+Document::Result Document::Load(const std::string& html, const std::string& charset)
 {
 	mImpl->mDocument.reset();
 
 	if (html.empty())
-		return Status::Empty;
+		return Result::Empty;
 	if (html.size() > mImpl->mSettings.max_html_size)
-		return Status::TooLarge;
+		return Result::TooLarge;
 	ScanResult scan = ScanHTML(html, mImpl->mSettings.max_nesting_depth);
 	if (scan.too_deep)
-		return Status::TooDeep;
+		return Result::TooDeep;
 	if (scan.elements > mImpl->mSettings.max_elements)
-		return Status::TooManyElements;
+		return Result::TooManyElements;
 
 	// Known charset: used as it is (a <meta charset> is ignored); unknown or
 	// none: litehtml detects it (byte order mark, <meta>, else UTF-8)
@@ -115,7 +115,7 @@ Document::Status Document::Load(const std::string& html, const std::string& char
 																	: litehtml::confidence::certain);
 
 	mImpl->mDocument = litehtml::document::createFromString(input, &mImpl->mContainer, MasterCSS());
-	return mImpl->mDocument ? Status::Ok : Status::Error;
+	return mImpl->mDocument ? Result::Ok : Result::Error;
 }
 
 int Document::Layout(int width)
@@ -146,21 +146,21 @@ void Document::Draw(cairo_t* cr, int x, int y, const Rect& clip)
 	mImpl->mDocument->draw((litehtml::uint_ptr) cr, x, y, &clip_pos);
 }
 
-const char* Document::StatusText(Status status)
+const char* Document::ResultText(Result result)
 {
-	switch (status)
+	switch (result)
 	{
-	case Status::Ok:
+	case Result::Ok:
 		return "ok";
-	case Status::Empty:
+	case Result::Empty:
 		return "empty document";
-	case Status::TooLarge:
+	case Result::TooLarge:
 		return "document too large";
-	case Status::TooDeep:
+	case Result::TooDeep:
 		return "elements nested too deeply";
-	case Status::TooManyElements:
+	case Result::TooManyElements:
 		return "too many elements";
-	case Status::Error:
+	case Result::Error:
 	default:
 		return "document could not be created";
 	}

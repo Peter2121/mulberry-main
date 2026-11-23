@@ -74,6 +74,7 @@ enum EQuoteDepth
 class CAttachment;
 class CAddressList;
 class CBodyTable;
+class CHTMLDisplay;
 class CMbox;
 class CMessage;
 class CMessageCryptoInfo;
@@ -136,6 +137,7 @@ protected:
 public:
 			CTextDisplay* GetText()
 						{ return mText; }
+			bool	BodyHandleChar(const int key, const JXKeyModifiers& modifiers);	// Key for the message text (text or HTML view)
 
 	static  void	ServerState(bool logon);					// Server logs on/off
 
@@ -311,6 +313,8 @@ private:
 	JColorList*				mColorList;
 
 	CFormattedTextDisplay*	mText;
+	CHTMLDisplay*			mHTML;						// HTML view ("Format: as HTML"); NULL without the HTML viewer
+	bool					mHTMLShown;					// HTML view shown instead of mText
 
 	bool					mRedisplayBlock;			// Prevent window from being redisplayed
 	bool					mAllowDeleted;				// Allow window close on message delete
@@ -335,6 +339,9 @@ private:
 
 			void	Text2UTF16(i18n::ECharsetCode charset);	// Convert text to utf16
 			void	ResetText();						// Reset message text
+			void	SetParsing(EView view);				// Change the view mode and its popup
+			void	ShowHTML(bool show);				// Show the HTML view instead of the text, or the text
+			void	FocusText();						// Focus the message text (text or HTML view)
 			void	ResetFontScale();					// Reset font scale text
 			void	UpdatePartsCaption();				// Update parts caption
 			void	UpdatePartsList();					// Update list of parts, show/hide

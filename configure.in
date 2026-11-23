@@ -520,8 +520,12 @@ if test "$enable_html_viewer" != "no"; then
     # libcairo and libpixman-1 that a -l option could pick instead.
     HTMLDEPS_LIBDIR="`pwd`/Libraries/htmldeps/dist/lib"
     HTML_VIEWER="yes"
-    HTMLVIEW_CPPFLAGS="-DHTML_VIEWER -I`pwd`/Libraries/HTMLView/include"
-    HTMLVIEW_LIBS="`pwd`/Libraries/HTMLView/libHTMLView.a $HTMLDEPS_LIBDIR/liblitehtml.a $HTMLDEPS_LIBDIR/libgumbo.a $HTMLDEPS_LIBDIR/libharfbuzz.a $HTMLDEPS_LIBDIR/libcairo.a $HTMLDEPS_LIBDIR/libpixman-1.a $HTMLVIEW_SYS_LIBS"
+    # Mulberry (Linux/Makefile): the viewer's interface and Cairo's headers
+    # (the widget draws with Cairo on the X window); the static archives
+    # (HTMLVIEW_LIBS, also make prerequisites) and after everything else the
+    # system libraries they need (HTMLVIEW_SYS_LIBS)
+    HTMLVIEW_CPPFLAGS="-DHTML_VIEWER -I`pwd`/Libraries/HTMLView/include -I`pwd`/Libraries/htmldeps/dist/include/cairo"
+    HTMLVIEW_LIBS="`pwd`/Libraries/HTMLView/libHTMLView.a $HTMLDEPS_LIBDIR/liblitehtml.a $HTMLDEPS_LIBDIR/libgumbo.a $HTMLDEPS_LIBDIR/libharfbuzz.a $HTMLDEPS_LIBDIR/libcairo.a $HTMLDEPS_LIBDIR/libpixman-1.a"
     echo "HTML viewer enabled (litehtml, Cairo, HarfBuzz)"
 else
     echo "HTML viewer disabled"

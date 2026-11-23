@@ -733,6 +733,49 @@ stress pages. Findings and changes to the tasks above:
 **Milestone after stage 3:** HTML mail is readable in Mulberry for testing
 (preference on).
 
+**Stage 3 done (2026-11-23; built, to be tried in use).** Changed by the
+decisions taken then:
+- **No preference (task 3.3 dropped):** the new view *is* the format popup's
+  existing "as HTML" mode (`eViewAsHTML`), replacing the old flattening into
+  styled text. A message with an HTML part (the main text part, or the HTML
+  alternative of `multipart/alternative`, also inside `multipart/related`;
+  not an HTML attachment) opens "as HTML", showing that part; a message
+  without one opens "Formatted". A view the user picked (Plain Text, Source,
+  as Enriched, ...) is kept from message to message, as before; a restored
+  3-pane state keeps its view. This also covers most of stage 8.
+- **The header area (addresses, subject, Parts and Format popups) is not
+  affected.** The optional header text inside the message body (Header
+  button, or the summary) is shown as a plain text block at the top of the
+  HTML document (decision 3.4).
+- **No JX change (task 3.1):** `JXWindowPainter::GetDrawable()` is read
+  through a pointer to member taken in a derived class
+  (`CHTMLDisplay.cpp`), so the JX fork stays untouched.
+- `CHTMLDisplay` (`Linux/Sources/Formatting`): a `JXScrollableWidget` and a
+  `CCommander` placed over the text widget in the preview pane
+  (`CMessageView`) and in the message window (`CMessageWindow`); the one
+  not in use is hidden. Cairo draws on the window's drawable (or its buffer
+  pixmap), clipped to the area being redrawn. Layout again when the width
+  changes; scroll position kept in the view state.
+- Keys as in the text view: Space (page down, then next message;
+  Shift/Control variants), Tab (next new message in the preview), Delete,
+  Home/End, Page Up/Down, arrows, mouse wheel; single-key shortcuts go to
+  the message view or window. The window's header fields pass Space and
+  Delete to whichever view is shown.
+- Default font family and size of the HTML view: the "HTML text" font
+  preference with the font scale (+/- buttons), converted to pixels as Xft
+  does (`Xft.dpi`, else the screen's resolution).
+- The text widget is still filled (hidden) with the old rendering, so Save,
+  Print, spell checking and reply quoting work as before until stages 6–7;
+  Copy, Select All and Find are not available in the HTML view yet.
+- If the viewer rejects a mail (limits of stage 2), the text widget shows it
+  as before.
+- `Libraries/HTMLView`: the result enum is `Document::Result`, not `Status`
+  (Xlib defines `Status` as a macro).
+- Build: `Linux/Makefile` links the static libraries (Mulberry grows by
+  about 9 MB unstripped); run-time dependencies added: libpng and libXrender
+  only. Without the viewer (`--disable-html-viewer`) the changed files
+  compile to the old behaviour.
+
 ### 11.6 Stage 4: links
 
 | # | Task | Check | Size |
@@ -777,6 +820,9 @@ stress pages. Findings and changes to the tasks above:
 
 ### 11.10 Stage 8: user switch and default
 
+*Mostly superseded (2026-11-23): "as HTML" in the format popup is the
+switch, and it is the default for messages with HTML (stage 3 notes).*
+
 | # | Task | Check | Size |
 |---|---|---|---|
 | 8.1 | Preferences dialog: checkbox "Display HTML messages formatted (new viewer)" | toggling it takes effect on the next message | S |
@@ -798,5 +844,5 @@ stress pages. Findings and changes to the tasks above:
 |---|---|---|
 | litehtml build (1.5) | litehtml's own CMake (new build tool `cmake`), or a small Makefile of ours | **Decided: CMake** (2026-11-23) |
 | Image decoders (5.1) | system libjpeg-turbo + giflib (+ libwebp), or bundled `stb_image` (no releases, so the HEAD of its branch) | system libraries: security fixes arrive through the system |
-| Message header (3.4) | escaped block inside the HTML document, or a separate text widget above the viewer | inside the document: one scroll area, simplest |
+| Message header (3.4) | escaped block inside the HTML document, or a separate text widget above the viewer | **Decided 2026-11-23:** inside the document; the header area of the window does not move |
 | Default Linux HarfBuzz/Cairo (9.1) | bundled static or system shared | to be discussed (section 10.7) |

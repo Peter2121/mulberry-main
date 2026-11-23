@@ -55,8 +55,8 @@ bool CSpacebarEdit::HandleChar(const int key, const JXKeyModifiers& modifiers)
 	case ' ':
 	case kJDeleteKey:
 	case kJForwardDeleteKey:
-		// Pass to text display
-		mMsgWindow->GetText()->HandleChar(key, modifiers);
+		// Pass to text display (or the HTML view when it is shown)
+		mMsgWindow->BodyHandleChar(key, modifiers);
 		return true;
 
 	default:

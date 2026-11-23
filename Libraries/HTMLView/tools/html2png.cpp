@@ -153,12 +153,12 @@ int main(int argc, char** argv)
 
 	auto start = std::chrono::steady_clock::now();
 	htmlview::Document document(settings);
-	htmlview::Document::Status status = document.Load(html, charset);
+	htmlview::Document::Result status = document.Load(html, charset);
 	double parse_ms = Milliseconds(start);
-	if (status != htmlview::Document::Status::Ok)
+	if (status != htmlview::Document::Result::Ok)
 	{
-		std::cerr << "html2png: " << input << ": " << htmlview::Document::StatusText(status) << "\n";
-		return (status == htmlview::Document::Status::Error) ? 1 : 3;
+		std::cerr << "html2png: " << input << ": " << htmlview::Document::ResultText(status) << "\n";
+		return (status == htmlview::Document::Result::Error) ? 1 : 3;
 	}
 
 	start = std::chrono::steady_clock::now();

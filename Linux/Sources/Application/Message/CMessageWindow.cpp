@@ -20,6 +20,8 @@
 
 #include "CMessageWindow.h"
 
+#include "CHTMLDisplay.h"
+
 #include "CActionManager.h"
 #include "CAddressList.h"
 #include "CAdminLock.h"
@@ -146,6 +148,8 @@ CMessageWindow::CMessageWindow(JXDirector* supervisor)
 	mParsing = eViewFormatted;
 	mFontScale = 0;
 	mQuoteDepth = -1;
+	mHTML = NULL;
+	mHTMLShown = false;
 
 	mHeaderState.mExpanded = true;
 	mHeaderState.mFromVisible = true;
@@ -302,6 +306,15 @@ void CMessageWindow::OnCreate()
 	mText->SetSpacesPerTab(CPreferences::sPrefs->spaces_per_tab.GetValue());
 	mText->SetTabSelectAll(false);
 	mText->SetFindAllowed(true);
+
+#ifdef HTML_VIEWER
+	// HTML view ("Format: as HTML"), in the same place as the text, hidden
+	// until an HTML part is shown
+	mHTML = new CHTMLDisplay(mBottomPane, JXWidget::kHElastic, JXWidget::kVElastic,
+							 0, cSecurePaneHeight, cWindowWidth, cSplitterHeight - cSecurePaneHeight);
+	mHTML->SetMessageWindow(this);
+	mHTML->GetScroller()->Hide();
+#endif
 
 	// Hide the verify/decrypt details
 	ShowSecretPane(false);
@@ -599,6 +612,20 @@ void CMessageWindow::SetMessage(CMessage* theMsg)
 
 	// Reset text
 	CAttachment* attach = mItsMsg->FirstDisplayPart();
+#ifdef HTML_VIEWER
+	// A message with HTML opens as HTML, a message without it in the
+	// formatted view; a view chosen by the user (plain, source, ...) stays
+	{
+		CAttachment* html = CHTMLDisplay::FindHTMLPart(mItsMsg);
+		if (html && ((mParsing == eViewFormatted) || (mParsing == eViewAsHTML)))
+		{
+			attach = html;
+			SetParsing(eViewAsHTML);
+		}
+		else if (!html && (mParsing == eViewAsHTML))
+			SetParsing(eViewFormatted);
+	}
+#endif
 	ShowPart(attach);
 	mPartsTable->SetRowShow(attach);
 
@@ -664,7 +691,7 @@ void CMessageWindow::PostSetMessage()
 				mDidExpandParts = true;
 
 				// Must set focus back to text as expanding parts sets it to the parts table
-				mText->Focus();
+				FocusText();
 			}
 		}
 		else
@@ -853,9 +880,14 @@ void CMessageWindow::ResetText(void)
 		mText->ResetFont(*actual_font, mFontScale);
 		mText->Reset(true, mFontScale);
 
-		// Copy in header if required
+		// Copy in header if required (kept for the HTML view too)
+		cdstring header_text;
 		if (mShowHeader)
+		{
 			mText->ParseHeader(mItsMsg->GetHeader(), actual_view);
+			if (mItsMsg->GetHeader())
+				header_text = mItsMsg->GetHeader();
+		}
 		else if (!mHeaderState.mExpanded)
 		{
 			// Get summary from envelope
@@ -864,6 +896,7 @@ void CMessageWindow::ResetText(void)
 			hdr << std::ends;
 
 			mText->ParseHeader(hdr.str(), actual_view);
+			header_text = hdr.str();
 			hdr.freeze(false);
 		}
 
@@ -890,10 +923,81 @@ void CMessageWindow::ResetText(void)
 
 		// Set selection at start
 		mText->SetSelectionRange(0, 0);
+
+		// As HTML: the HTML view shows the part (the text above stays
+		// filled, for saving, printing and quoting); if the viewer rejects
+		// it, the text is shown
+#ifdef HTML_VIEWER
+		bool show_html = false;
+		if ((mParsing == eViewAsHTML) && mCurrentPart && mUTF16Text.get())
+			show_html = mHTML->SetContent(mUTF16Text.get(), header_text.c_str(), *actual_font, mFontScale);
+		else
+			mHTML->ClearContent();
+		ShowHTML(show_html);
+#endif
 	}
 
 	// Make it active
+	FocusText();
+}
+
+// Focus the message text: the HTML view when it is shown
+void CMessageWindow::FocusText()
+{
+#ifdef HTML_VIEWER
+	if (mHTMLShown)
+	{
+		mHTML->Focus();
+		return;
+	}
+#endif
 	mText->Focus();
+}
+
+// Change the view mode and show it in the popup
+void CMessageWindow::SetParsing(EView view)
+{
+	mParsing = view;
+	mHeader->mTextFormat->SetValue(mParsing);
+
+	// Quote depth only in formatted mode
+	mHeader->mQuoteDepthPopup->SetActive(JBoolean(mParsing == eViewFormatted));
+}
+
+// Show the HTML view instead of the text, or the text
+void CMessageWindow::ShowHTML(bool show)
+{
+#ifdef HTML_VIEWER
+	if (show == mHTMLShown)
+		return;
+
+	bool had_focus = mText->HasFocus() || mHTML->HasFocus();
+	if (show)
+	{
+		mText->GetScroller()->Hide();
+		mHTML->GetScroller()->Show();
+	}
+	else
+	{
+		mHTML->GetScroller()->Hide();
+		mText->GetScroller()->Show();
+	}
+	mHTMLShown = show;
+
+	// The hidden one cannot keep the focus
+	if (had_focus)
+		FocusText();
+#endif
+}
+
+// Key for the message text, from the header fields (space, delete)
+bool CMessageWindow::BodyHandleChar(const int key, const JXKeyModifiers& modifiers)
+{
+#ifdef HTML_VIEWER
+	if (mHTMLShown)
+		return mHTML->HandleChar(key, modifiers);
+#endif
+	return mText->HandleChar(key, modifiers);
 }
 
 // Reset font scale text
@@ -1060,6 +1164,10 @@ void CMessageWindow::SetSecretPane(const CMessageCryptoInfo& info)
 			{
 				mText->GetScroller()->AdjustSize(0, -moveby);
 				mText->GetScroller()->Move(0, moveby);
+#ifdef HTML_VIEWER
+				mHTML->GetScroller()->AdjustSize(0, -moveby);
+				mHTML->GetScroller()->Move(0, moveby);
+#endif
 			}
 			mSecurePane->AdjustSize(0, moveby);
 		}
@@ -1070,6 +1178,10 @@ void CMessageWindow::SetSecretPane(const CMessageCryptoInfo& info)
 			{
 				mText->GetScroller()->AdjustSize(0, moveby);
 				mText->GetScroller()->Move(0, -moveby);
+#ifdef HTML_VIEWER
+				mHTML->GetScroller()->AdjustSize(0, moveby);
+				mHTML->GetScroller()->Move(0, -moveby);
+#endif
 			}
 		}
 
@@ -1687,7 +1799,7 @@ void CMessageWindow::OnMessagePartsTwister(void)
 		mHeader->mPartsField->Show();
 
 		// Always focus on text
-		mText->Focus();
+		FocusText();
 	}
 	else
 	{
@@ -1734,6 +1846,10 @@ void CMessageWindow::ShowSecretPane(bool show)
 		// Shrink/move text pane
 		mText->GetScroller()->AdjustSize(0, -moveby);
 		mText->GetScroller()->Move(0, moveby);
+#ifdef HTML_VIEWER
+		mHTML->GetScroller()->AdjustSize(0, -moveby);
+		mHTML->GetScroller()->Move(0, moveby);
+#endif
 
 		// Show parts after all other changes
 		mSecurePane->Show();
@@ -1746,6 +1862,10 @@ void CMessageWindow::ShowSecretPane(bool show)
 		// Expand/move splitter
 		mText->GetScroller()->AdjustSize(0, moveby);
 		mText->GetScroller()->Move(0, -moveby);
+#ifdef HTML_VIEWER
+		mHTML->GetScroller()->AdjustSize(0, moveby);
+		mHTML->GetScroller()->Move(0, -moveby);
+#endif
 	}
 
 	mShowSecure = show;
@@ -2385,6 +2505,10 @@ CCommander* CMessageWindow::GetTarget()
 		return mPartsTable;
 	else if (mText->HasFocus())
 		return mText;
+#ifdef HTML_VIEWER
+	else if (mHTML->HasFocus())
+		return mHTML;
+#endif
 
 	return this;
 }
