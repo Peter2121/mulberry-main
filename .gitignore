@@ -155,6 +155,8 @@ Libraries/HTMLView/obj/
 Libraries/HTMLView/libHTMLView.a
 Libraries/HTMLView/html2png
 Libraries/HTMLView/tests/out/
+# Real mail used for testing (personal data): never committed
+Libraries/HTMLView/tests/*.eml
 
 # Build artifacts
 Linux/Includes/

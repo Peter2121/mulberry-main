@@ -24,7 +24,7 @@
 	url = https://github.com/Peter2121/mulberry-vendor-vzic.git
 [submodule "Libraries/litehtml"]
 	path = Libraries/litehtml
-	url = https://github.com/litehtml/litehtml.git
+	url = https://github.com/Peter2121/litehtml.git
 [submodule "Libraries/pixman"]
 	path = Libraries/pixman
 	url = https://gitlab.freedesktop.org/pixman/pixman.git
