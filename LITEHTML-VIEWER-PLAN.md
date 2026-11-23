@@ -776,6 +776,33 @@ decisions taken then:
   only. Without the viewer (`--disable-html-viewer`) the changed files
   compile to the old behaviour.
 
+**Stage 3 follow-up (2026-11-23), from two real newsletters (an MJML one and
+a classic table one):**
+- Header text in the HTML view: one font size step smaller (÷1.2, as the
+  font size buttons' "-1"); the other views are unchanged.
+- Mail style sheet (`Libraries/HTMLView/src/Document.cpp`): `align="center"`
+  / `"right"` on cells, `<div>`, `<p>` and `<center>` also centre (or
+  right-align) child tables and block images, as browsers do
+  (`-webkit-center`); newsletters centre their column this way.
+- **litehtml patched** (in the submodule's working tree; needs an own fork,
+  task 9.4, before it can be committed):
+  - `render_table.cpp`: a cell's specified height (`height` attribute or
+    CSS) is the minimum height of its row (CSS 2.1, 17.5.3). It was ignored,
+    also in v0.10, so empty spacer cells took no space.
+  - `table.cpp`: cells spanning columns are distributed in order of
+    increasing span, as browsers do; a `colspan="8"` image cell over a
+    `colspan="2"` price cell made each product card about 90 px too wide.
+  - `render_block_context.cpp`, `render_inline_context.cpp`: vertical
+    alignment in table cells (`middle` is the default) moves the content
+    from where it is to where it belongs, instead of adding a shift each
+    time the table is rendered again, and does nothing when the content
+    measures as empty. Regression found by bisection: upstream `ebf1073`
+    (2026-10-29, block content aligned in cells) with the layout cache of
+    `28a806e` shifted MJML content by up to half a row and let the following
+    content overlap it.
+- New synthetic test page `tests/30-newsletter-layout.html` for these four
+  cases. Real mail used for testing stays local (`tests/*.eml` is ignored).
+
 ### 11.6 Stage 4: links
 
 | # | Task | Check | Size |

@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Newsletter layout idioms</title>
+<!-- Synthetic sample: layout idioms of newsletter generators that litehtml
+     did not handle (see LITEHTML-VIEWER-PLAN.md, stage 3 follow-up) -->
+<style>
+  body { margin: 0; background: #e6e6e6; font-family: Arial, Helvetica, sans-serif; }
+</style>
+</head>
+<body>
+
+<!-- 1. A column centred by <td align="center"> (browsers centre child tables too) -->
+<table width="100%" cellpadding="0" cellspacing="0" bgcolor="#e6e6e6">
+<tr><td align="center">
+  <table width="480" cellpadding="0" cellspacing="0" bgcolor="#ffffff">
+
+    <!-- 2. Empty spacer cells with a height -->
+    <tr><td height="30" bgcolor="#2c2c2c"><div></div></td></tr>
+    <tr><td align="center" bgcolor="#2c2c2c" style="color: #ffffff; font-size: 24px; font-weight: bold;">Centred column, spacer rows</td></tr>
+    <tr><td height="20" bgcolor="#2c2c2c"></td></tr>
+    <tr><td align="center" bgcolor="#2c2c2c">
+      <table cellpadding="0" cellspacing="0" style="border: 2px solid #ffffff; border-collapse: separate; border-radius: 2px;">
+        <tr><td align="center"><a href="https://example.org/" style="display: block; padding: 13px 30px; color: #ffffff; font-size: 17px; font-weight: bold; text-decoration: none;">Centred button</a></td></tr>
+      </table>
+    </td></tr>
+    <tr><td height="40" bgcolor="#2c2c2c"><div></div></td></tr>
+    <tr><td style="height: 30px"></td></tr>
+    <tr><td align="center" style="font-size: 15px; color: #2c2c2c;">Text after a 30px spacer (style="height: 30px")</td></tr>
+    <tr><td height="30"></td></tr>
+
+    <!-- 3. Cards whose first row spans more columns than the others use -->
+    <tr><td>
+      <table width="100%" cellpadding="0" cellspacing="0"><tr>
+        <td width="152" valign="top">
+          <table width="100%" cellpadding="0" cellspacing="0">
+            <tr><td colspan="8" width="152" height="120" bgcolor="#cccccc" style="border-radius: 12px;"></td></tr>
+            <tr><td width="8"></td><td colspan="2" style="font-size: 20px; white-space: nowrap;">12,34 €</td></tr>
+          </table>
+        </td>
+        <td width="12"></td>
+        <td width="152" valign="top">
+          <table width="100%" cellpadding="0" cellspacing="0">
+            <tr><td colspan="8" width="152" height="120" bgcolor="#cccccc" style="border-radius: 12px;"></td></tr>
+            <tr><td width="44" style="padding: 0 4px;"><div style="border: 1px solid #ff2751; color: #ff2751; font-size: 13px; text-align: center;">-10%</div></td><td colspan="2" style="font-size: 20px; white-space: nowrap;">56,78 €</td></tr>
+          </table>
+        </td>
+        <td width="12"></td>
+        <td width="152" valign="top">
+          <table width="100%" cellpadding="0" cellspacing="0">
+            <tr><td colspan="8" width="152" height="120" bgcolor="#cccccc" style="border-radius: 12px;"></td></tr>
+            <tr><td width="8"></td><td colspan="2" style="font-size: 20px; white-space: nowrap;">90,12 €</td></tr>
+          </table>
+        </td>
+      </tr></table>
+    </td></tr>
+    <tr><td height="30"></td></tr>
+  </table>
+</td></tr>
+</table>
+
+<!-- 4. MJML structure: centred wrappers, inline-block columns in font-size 0
+     containers, a tall heading in a table cell (vertical-align: middle) -->
+<div style="margin: 0px auto; max-width: 600px;">
+<table align="center" border="0" cellpadding="0" cellspacing="0" style="width: 100%;"><tbody><tr>
+<td style="direction: ltr; font-size: 0px; padding: 0px; text-align: center;">
+  <div style="margin: 0px auto; max-width: 600px;">
+  <table align="center" border="0" cellpadding="0" cellspacing="0" style="width: 100%;"><tbody><tr>
+  <td style="direction: ltr; font-size: 0px; padding: 0px; text-align: center;">
+    <div style="font-size: 0; line-height: 0; display: inline-block; width: 100%; direction: ltr; text-align: center;">
+      <div style="font-size: 0px; text-align: left; direction: ltr; display: inline-block; vertical-align: top; width: 100%;">
+        <table border="0" cellpadding="0" cellspacing="0" width="100%"><tbody><tr><td style="vertical-align: top; padding: 0px;">
+        <table border="0" cellpadding="0" cellspacing="0" width="100%"><tbody><tr>
+        <td align="left" style="font-size: 0px; padding: 0px; word-break: break-word;">
+          <div style="font-size: 13px; line-height: 1; text-align: left; color: #000000;">
+            <table width="100%" cellpadding="0" cellspacing="0" bgcolor="#fff3f0" style="text-align: left;"><tbody>
+              <tr><td width="600" height="32" colspan="5"></td></tr>
+              <tr>
+                <td width="60" height="auto"></td>
+                <td width="135" height="auto"><div style="width: 135px; height: 135px; background: #e0c8c0;"></div></td>
+                <td width="35" height="auto"></td>
+                <td width="310" height="auto">
+                  <p style="font-size: 36px; font-weight: bold; line-height: 44px; margin: 13px 0;">A heading long enough to wrap over several lines</p>
+                  <a href="https://example.org/" style="text-decoration: none;"><p style="border-radius: 3px; text-align: center; background: #000000; margin-top: 23px;"><span style="font-weight: bold; font-size: 24px; color: #ffffff; line-height: 60px;">See all</span></p></a>
+                </td>
+                <td width="60" height="auto"></td>
+              </tr>
+              <tr><td width="600" height="32" colspan="5"></td></tr>
+            </tbody></table>
+          </div>
+        </td></tr></tbody></table>
+        </td></tr></tbody></table>
+      </div>
+    </div>
+  </td></tr></tbody></table>
+  </div>
+</td></tr></tbody></table>
+</div>
+<p style="text-align: center; font-size: 14px;">End of page: must be below the pink block, not over it.</p>
+</body>
+</html>

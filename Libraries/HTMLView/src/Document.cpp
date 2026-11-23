@@ -27,7 +27,9 @@ namespace
 // visible: some newsletters wrap everything in one.
 //
 // Also HTML attributes litehtml does not map to CSS itself: the list types
-// of <ol type> and <ul type>.  Rules of the master style sheet are applied
+// of <ol type> and <ul type>; align="center"/"right" on cells, <div>, <p>
+// and <center>, which browsers apply to child tables and block images too
+// (as -webkit-center: newsletters centre their columns this way).  Rules of the master style sheet are applied
 // before the document's, so any author CSS overrides them, as it overrides
 // presentational attributes in browsers.
 const char* const cMailCSS = R"(
@@ -43,6 +45,18 @@ ol[type="I" s] { list-style-type: upper-roman; }
 ul[type="disc"] { list-style-type: disc; }
 ul[type="circle"] { list-style-type: circle; }
 ul[type="square"] { list-style-type: square; }
+td[align="center"] > table, th[align="center"] > table, div[align="center"] > table,
+p[align="center"] > table, center > table,
+td[align="center"] > img, th[align="center"] > img, div[align="center"] > img,
+td[align="center"] > a > img, th[align="center"] > a > img, div[align="center"] > a > img {
+	margin-left: auto;
+	margin-right: auto;
+}
+td[align="right"] > table, th[align="right"] > table, div[align="right"] > table,
+td[align="right"] > img, th[align="right"] > img, div[align="right"] > img {
+	margin-left: auto;
+	margin-right: 0;
+}
 )";
 
 // <table cellpadding="N">, heavily used by mail newsletters, is not mapped

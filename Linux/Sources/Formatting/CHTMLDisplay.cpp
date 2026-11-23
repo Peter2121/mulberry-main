@@ -41,6 +41,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <string>
 
@@ -60,12 +61,17 @@ public:
 };
 
 // Header text (UTF-8) as an HTML block placed before the message's HTML;
-// the parser moves it into the document's body
-std::string HeaderHTML(const char* header)
+// the parser moves it into the document's body.  font_size: in pixels.
+std::string HeaderHTML(const char* header, double font_size)
 {
+	char size[32];
+	std::snprintf(size, sizeof(size), "%.1fpx", font_size);
 	std::string html = "<div style=\"display: block; white-space: pre-wrap; margin: 0 0 8px 0; "
 					   "padding: 0 0 8px 0; border-bottom: 1px solid #c0c0c0; color: #000000; "
-					   "background: #ffffff; text-align: left; font-style: normal; font-weight: normal\">";
+					   "background: #ffffff; text-align: left; font-style: normal; font-weight: normal; "
+					   "line-height: normal; font-size: ";
+	html += size;
+	html += "\">";
 	for (const char* p = header; *p; p++)
 	{
 		switch (*p)
@@ -212,8 +218,10 @@ bool CHTMLDisplay::SetContent(const unichar_t* html, const char* header, const S
 	settings.screen_height = DisplayHeight(display, DefaultScreen(display));
 
 	std::string text;
+	// The header one size step smaller than the text (as the font size
+	// buttons' "-1")
 	if (header && *header)
-		text = HeaderHTML(header);
+		text = HeaderHTML(header, settings.default_font_size / 1.2);
 	if (html)
 	{
 		cdustring utf16(html);
