@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>CSS boxes</title>
+<style>
+  body { font-family: sans-serif; margin: 16px; background: #fafafa; }
+  .box { margin: 10px 0; padding: 12px; }
+  .rounded { border: 2px solid #2a6; border-radius: 12px; background: #efe; }
+  .dashed { border: 3px dashed #c60; }
+  .dotted { border: 3px dotted #06c; }
+  .double { border: 6px double #333; }
+  .grad1 { background: linear-gradient(to right, #ff8a00, #e52e71); color: white; }
+  .grad2 { background: radial-gradient(circle, #ffffff, #6699cc); height: 60px; }
+  .flex { display: flex; gap: 8px; }
+  .flex div { flex: 1; background: #dde; padding: 8px; text-align: center; }
+  .button { display: inline-block; background: #1a73e8; color: #fff; padding: 10px 24px;
+            border-radius: 4px; text-decoration: none; font-weight: bold; }
+  .float { float: right; width: 120px; height: 60px; background: #fd8; margin: 0 0 8px 8px; }
+  .hidden { display: none; }
+  @media (max-width: 600px) { .wide-only { display: none; } }
+  @media (min-width: 601px) { .narrow-only { display: none; } }
+</style>
+</head>
+<body>
+<div class="box rounded">Rounded border, background</div>
+<div class="box dashed">Dashed border</div>
+<div class="box dotted">Dotted border</div>
+<div class="box double">Double border</div>
+<div class="box grad1">Linear gradient</div>
+<div class="box grad2">Radial gradient</div>
+<div class="flex"><div>flex 1</div><div>flex 2</div><div>flex 3</div></div>
+<p><a class="button" href="https://example.org/">Call to action</a></p>
+<div class="box"><div class="float">float right</div>Text flowing around a floated box. Lorem ipsum dolor
+sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore
+magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco.</div>
+<div class="hidden">This must not be visible.</div>
+<p class="wide-only">Shown when the width is more than 600px (media query).</p>
+<p class="narrow-only">Shown when the width is 600px or less (media query).</p>
+<p>Hidden by the viewer (no forms, frames or embedded content):</p>
+<form><p>Text inside a form stays visible.</p>
+<input type="text" value="input"><button>button</button><select><option>select</option></select>
+<textarea>textarea</textarea></form>
+<iframe src="https://example.org/"></iframe>
+<object data="x.swf"></object>
+<script>document.write("scripts never run");</script>
+<p>End of page.</p>
+</body>
+</html>

@@ -22,6 +22,13 @@ blocked by default, and Mulberry's existing link handling.
 > litehtml's upstream Cairo+Pango container: where they say Pango, read "the
 > text layer", which S1 implements with HarfBuzz and fontconfig.
 
+> **Implementation started (2026-11-23), branch `html-viewer`:** variant A
+> (current JX interface) with stack S1. The submodules are in place (section
+> 10.7); the work is split into small stages and tasks in **section 11**, each
+> leaving the build and the running program correct. Stages 1 and 2 are done:
+> the libraries are built with Mulberry, and the viewer core with its test
+> tool `html2png` is in `Libraries/HTMLView`.
+
 - **In the current JX interface:** about 1.5–2 person-months. Most of the work
   (the viewer core and its Mulberry integration) is independent of the toolkit
   and is reused in an FLTK or Qt port.
@@ -73,6 +80,15 @@ blocked by default, and Mulberry's existing link handling.
 
 - An HTML/CSS layout engine: BSD-3 licence, about 44,000 lines, Gumbo HTML
   parser included. Very active (upstream commit `efb0ec8` on 2026-11-20).
+  The submodule follows **master** (commit `28a806e`, 2026-11-22), not the
+  last release v0.10 (2026-06-14): in v0.10, the layout time of nested
+  tables and flex boxes grows about 3× per nesting level (12 nested tables:
+  1.4 s; 14: 22 s), which a newsletter or a hostile mail can reach; master
+  lays out both in under a millisecond (measured 2026-11-23 with `html2png`).
+  Master's interface has the same functions as v0.10's, but `pixel_t` became
+  a class and the `litehtml::string` alias is gone (an earlier note here
+  called the interfaces identical: the comparison had normalised the type
+  names); the viewer's code compiles with both.
 - **No JavaScript**, which is what a mail viewer needs.
 - It draws nothing itself: the application implements a `document_container`
   interface (fonts, text, images, borders, backgrounds, clipping, links,
@@ -140,13 +156,17 @@ section 9), with the upstream Cairo+Pango container, 800×1000 viewport:
 - `Libraries/litehtml` as a git submodule (upstream repository), built as a
   static library (its `src/*.cpp` and `src/gumbo/*.c`, plus the Cairo and
   Cairo+Pango container sources). Either a small Makefile or a CMake step
-  called from Mulberry's build.
+  called from Mulberry's build. With S1, only the toolkit-neutral Cairo part
+  of the upstream container is used (`containers/cairo/container_cairo.cpp`,
+  `cairo_borders.cpp`, `conic_gradient.cpp`: borders, backgrounds, gradients,
+  images; no Pango or GLib); fonts and text are Mulberry's own S1 code
+  (section 11, stage 2).
 - New build dependencies: `cairo`, `pango` (FreeBSD packages; present on any
   desktop); `cmake` if litehtml's own build is used.
 - `scripts/build-freebsd.sh`: add them to the package check.
-- **With the preferred stack S1 (section 10):** no Pango. Cairo (with pixman)
-  and HarfBuzz as submodules built statically by a Meson step; new build-only
-  tools `meson` and `ninja`. Run-time dependencies remain the system's FreeType,
+- **With the preferred stack S1 (section 10):** no Pango. pixman, Cairo and
+  HarfBuzz as separate submodules built statically by a Meson step (pixman
+  first, section 10.6); new build-only tools `meson` and `ninja`. Run-time dependencies remain the system's FreeType,
   fontconfig and libpng. On Linux, HarfBuzz may come from the system instead
   (a build option, packager's choice).
 
@@ -273,6 +293,8 @@ Unlike the font fallback in JX (`FONT-FALLBACK-PLAN.md`), most of this work is
 therefore **not thrown away** by a later migration.
 
 ## 8. Suggested steps
+
+*Superseded by the detailed stages in section 11; kept as the overview.*
 
 1. **Prototype (1 week):**
    - litehtml as a submodule, built with Mulberry;
@@ -458,20 +480,43 @@ CoreGraphics on macOS, S1 or S2 on Unix).
 ### 10.6 Verified: static Cairo and HarfBuzz builds (S1)
 
 **Cairo 1.18.6 + pixman 0.46.4, static:**
-- Sources from freedesktop.org's Git; pixman placed in Cairo's tree as a Meson
-  subproject (directory name expected by Cairo's wrap file:
-  `subprojects/pixman-0.44.2`).
-- Configuration:
+- **Layout used from now on (verified 2026-11-23): pixman as a separate
+  submodule**, built first and installed into a staging prefix; Cairo is then
+  configured against it through pkg-config. Both from the submodules
+  `Libraries/pixman` and `Libraries/cairo`, with build directories outside the
+  source trees (the submodules stay clean):
   ```sh
-  CC=gcc14 meson setup build --buildtype=release --default-library=static \
-      --wrap-mode=nodownload --force-fallback-for=pixman \
+  DIST=$PWD/Libraries/htmldeps/dist
+  CC=gcc14 meson setup Libraries/htmldeps/build/pixman Libraries/pixman \
+      --prefix=$DIST --libdir=lib --buildtype=release \
+      --default-library=static --wrap-mode=nodownload \
+      -Dtests=disabled -Ddemos=disabled -Dgtk=disabled -Dlibpng=disabled \
+      -Dopenmp=disabled
+  ninja -C Libraries/htmldeps/build/pixman install
+
+  PKG_CONFIG_PATH=$DIST/libdata/pkgconfig:$DIST/lib/pkgconfig \
+  CC=gcc14 meson setup Libraries/htmldeps/build/cairo Libraries/cairo \
+      --prefix=$DIST --libdir=lib --buildtype=release \
+      --default-library=static --wrap-mode=nodownload \
       -Dglib=disabled -Dxlib=enabled -Dxcb=disabled -Dfreetype=enabled \
       -Dfontconfig=enabled -Dpng=enabled -Dzlib=enabled -Dtests=disabled \
       -Dspectre=disabled -Dlzo=disabled -Dsymbol-lookup=disabled -Dtee=disabled \
-      -Dgtk2-utils=disabled -Ddwrite=disabled -Dquartz=disabled \
-      -Dpixman:tests=disabled -Dpixman:demos=disabled -Dpixman:gtk=disabled \
-      -Dpixman:libpng=disabled -Dpixman:openmp=disabled
+      -Dgtk2-utils=disabled -Ddwrite=disabled -Dquartz=disabled
+  ninja -C Libraries/htmldeps/build/cairo install
   ```
+  - **Pitfall found:** on FreeBSD, Meson installs `.pc` files into
+    `libdata/pkgconfig`, on Linux into `lib/pkgconfig`; `PKG_CONFIG_PATH` must
+    name both. With only `lib/pkgconfig`, Cairo silently used the **system**
+    pixman (also 0.46.4, `/usr/local/include/pixman-1`). Check:
+    `grep -- '-I.*pixman-1' build.ninja` must show the staging directory.
+  - Build time: pixman 14 s, Cairo 21 s. A test program linked with
+    `libcairo.a` and `libpixman-1.a` by full path loads no shared Cairo or
+    pixman.
+- First verification (same versions, kept for reference): pixman placed in
+  Cairo's tree as a Meson subproject (directory name expected by Cairo's wrap
+  file: `subprojects/pixman-0.44.2`), configured with
+  `--force-fallback-for=pixman` and `-Dpixman:…` options instead of the
+  separate pixman step; the other options as above.
 - Enabled: Image, Xlib/XRender (drawing on JX's X windows), PDF, PostScript and
   SVG surfaces (printing); FreeType and fontconfig fonts.
 - Build: **39 s**; `libcairo.a` 2.5 MB, `libpixman-1.a` 1.4 MB; `libcairo.a`
@@ -513,9 +558,27 @@ statically:
 
 ### 10.7 Integration and packaging
 
-- **Submodules** (ideally own forks, like the others): `Libraries/cairo` (with
-  pixman under its `subprojects/`) and `Libraries/harfbuzz`, built by a Meson
-  step called from `configure`/`Makefile` before the rest, as JX is today.
+- **Submodules** (added 2026-11-23 on branch `html-viewer`, from the upstream
+  repositories for now; own forks later, like the other libraries, when
+  patches are needed), each pinned to a release tag:
+
+  | Submodule | Upstream | Tag |
+  |---|---|---|
+  | `Libraries/litehtml` | github.com/litehtml/litehtml | master `28a806e` (section 3: v0.10's nested layout is exponential) |
+  | `Libraries/pixman` | gitlab.freedesktop.org/pixman/pixman | `pixman-0.46.4` |
+  | `Libraries/cairo` | gitlab.freedesktop.org/cairo/cairo | `1.18.6` |
+  | `Libraries/harfbuzz` | github.com/harfbuzz/harfbuzz | `15.2.0` |
+
+- **pixman is a separate submodule**, not a Meson subproject inside Cairo's
+  tree (which would mean changing Cairo's tree). It is built first and
+  installed into a staging directory; Cairo then finds it through
+  `PKG_CONFIG_PATH` (section 10.6). All four are built by a step in
+  `Libraries/Makefile` before the rest, as JX is today; build and staging
+  directories stay outside the submodules, which remain clean.
+- **Link the static archives by full path** (`…/dist/lib/libcairo.a
+  …/dist/lib/libpixman-1.a`), not with `-lcairo -lpixman-1`: the system has
+  shared `libcairo.so` and `libpixman-1.so` in `/usr/local/lib`, and a `-l`
+  could pick them.
 - **Build cost:** about 2 extra minutes on 8 cores; new build-only tools
   `meson` and `ninja` (packaged; Meson needs Python). No new run-time
   dependencies.
@@ -549,3 +612,191 @@ statically:
   plutovg (commit `557a818`), Cairo 1.18.6 and pixman 0.46.4 (static build),
   HarfBuzz 15.2.0 (static build), installed HarfBuzz/Pango/Cairo libraries and
   headers, FreeBSD package database.
+
+## 11. Implementation stages
+
+*Added 2026-11-23. Branch `html-viewer`; variant A (current JX interface) with
+stack S1 (Cairo + HarfBuzz). Replaces the overview in section 8.*
+
+### 11.1 Rules for every task
+
+- **One task, one commit.** Each task is reviewed and committed before the next
+  starts.
+- **After every task the build and the program stay correct:**
+  - full build from a clean tree, with `scripts/build-freebsd.sh` and with the
+    plain `./configure && gmake` path used on Linux;
+  - Mulberry starts, and mail displays exactly as before, unless changing that
+    is the point of the task.
+- **The new viewer stays switched off until stage 8:**
+  - at build time, `configure --disable-html-viewer` builds Mulberry without
+    any of the new libraries. This path is kept working throughout, also as a
+    fallback for packagers;
+  - at run time, a preference (default off) selects the new viewer.
+- **The viewer core knows nothing about JX or Mulberry.** It lives in
+  `Libraries/HTMLView` and is compiled without Mulberry's prefix header.
+  Mulberry gives it UTF-8 HTML, a Cairo context and the visible rectangle,
+  and answers its callbacks (image data, link clicked, cursor). The same core
+  then serves an FLTK port (section 7).
+- **Generated files stay out of the submodules:** build and staging
+  directories go under `Libraries/htmldeps/` (git-ignored); the four
+  submodules stay clean.
+- **Checks:** each task lists its own. Visual checks are done by the developer,
+  on PNG files from the test tool or in the running Mulberry.
+- **Sizes:** S = up to half a day, M = 1–2 days, L = 3–5 days.
+
+### 11.2 Stage 0: submodules (done)
+
+| # | Task | Check |
+|---|---|---|
+| 0.1 | Branch `html-viewer`; submodules `Libraries/litehtml` (v0.10, then master `28a806e` during stage 2, section 3), `Libraries/pixman` (pixman-0.46.4), `Libraries/cairo` (1.18.6), `Libraries/harfbuzz` (15.2.0), from the upstream repositories | ✓ litehtml v0.10 built; pixman → Cairo built with the separate-pixman layout (section 10.6) |
+
+### 11.3 Stage 1: building the libraries (Mulberry unchanged)
+
+| # | Task | Check | Size |
+|---|---|---|---|
+| 1.1 | `.gitignore`: `Libraries/htmldeps/`. `scripts/build-freebsd.sh`: `meson`, `ninja` and `cmake` (see 1.5) added to the requirements, and the four submodules to `check_submodules` | the script builds as before; a missing tool is reported with its `pkg install` line | S |
+| 1.2 | `Libraries/Makefile.in`: target `htmldeps-pixman` (Meson, static, installed into `Libraries/htmldeps/dist`); not yet part of `all` | `gmake -C Libraries htmldeps-pixman` gives `dist/lib/libpixman-1.a`; the normal build is unchanged | S |
+| 1.3 | Target `htmldeps-cairo`, after pixman, with `PKG_CONFIG_PATH` on both staging `pkgconfig` directories (section 10.6) | `libcairo.a`; `build.ninja` shows the staged pixman headers; no GLib symbols | S |
+| 1.4 | Target `htmldeps-harfbuzz` (options from section 10.6) | `libharfbuzz.a`; no GLib or libstdc++ symbols | S |
+| 1.5 | Target `htmldeps-litehtml` (litehtml's own CMake, out of tree, static, tests off) | `liblitehtml.a` and `libgumbo.a` in `dist/lib`, headers in `dist/include` | S |
+| 1.6 | `htmldeps` (the four targets) becomes part of `all`, with `clean` and `distclean`, and a `SKIPHTMLDEPS` switch like `SKIPJX`. Meson and CMake configure only once; later runs are incremental | fresh-clone build works; a second `gmake` finishes quickly; Mulberry unchanged | M |
+| 1.7 | `configure.in`: `--enable-html-viewer` (default) / `--disable-html-viewer`. Enabled: defines `HTML_VIEWER` and substitutes include and link flags (static archives by full path, then the system FreeType, fontconfig, libpng, zlib and Xrender). Disabled: `htmldeps` skipped | both configurations build and run; the binary is the same size as before (nothing references the libraries yet) | M |
+
+**Stage 1 done (2026-11-23).** Notes:
+- `scripts/build-freebsd.sh -n` builds without the viewer (passes
+  `--disable-html-viewer`; meson, ninja and cmake are then not required).
+- The flags substituted by configure (`HTMLVIEW_CPPFLAGS`, `HTMLVIEW_LIBS`)
+  are not used by `Linux/Makefile` yet: Mulberry links them from stage 3 on,
+  so its binary is unchanged until then.
+- Meson and CMake get only the compiler's name: configure's `CC` may carry a
+  standard option (`gcc14 -std=gnu23`), and the libraries choose their own.
+- **HarfBuzz and ragel:** when `ragel` is installed (it is on this machine),
+  HarfBuzz's build regenerates its state machines into its source tree
+  (only `#line` numbers differ), leaving the submodule modified. A stub
+  `ragel` reporting version 0.0, given through a Meson native file, makes
+  HarfBuzz ignore it.
+- Build time from scratch: about 3 minutes on 8 cores (litehtml, pixman,
+  Cairo and HarfBuzz in parallel); a rebuild with nothing changed: 6 s.
+
+### 11.4 Stage 2: the viewer core, tested outside Mulberry
+
+| # | Task | Check | Size |
+|---|---|---|---|
+| 2.1 | `Libraries/HTMLView` skeleton:<br>• own Makefile, static `libHTMLView.a`, built from `Libraries/Makefile` only when enabled;<br>• public header with no litehtml types: load HTML (UTF-8) at a width, document height, draw into a `cairo_t` with a clip rectangle, mouse events in, callbacks out;<br>• container derived from upstream's `container_cairo`, with stub text functions (fixed metrics, no drawing);<br>• test tool `html2png <file.html> <width> <out.png>` | builds; PNG shows backgrounds, borders and table boxes; Mulberry unchanged | M |
+| 2.2 | S1 fonts and text:<br>• CSS font description → fontconfig match (family list, generic families, weight, style, size);<br>• FreeType face and HarfBuzz font cache;<br>• metrics (ascent, descent, height, x-height);<br>• `text_width` by HarfBuzz shaping;<br>• `draw_text` with `cairo_show_glyphs`;<br>• underline, overline and strike-through | `html2png` on text samples: Latin, Cyrillic, ligatures; text measures and wraps correctly | L |
+| 2.3 | Fallback per character: runs split by fontconfig coverage (as in the section 10.6 test), with a cache of fallback fonts | a mixed Latin/Cyrillic/Greek/Arabic/CJK sample has no missing glyphs | M |
+| 2.4 | Colour emoji through Cairo's FreeType back end (CBDT, COLR) | emoji sample renders in colour, at the text's size | S–M |
+| 2.5 | Test corpus in `Libraries/HTMLView/tests/`:<br>• anonymised newsletters and replies with quoted HTML;<br>• output of common clients (Outlook, Gmail, Thunderbird, Apple Mail).<br>`gmake check` renders all of them to PNG and reports time and memory | all render without crashing; timings comparable to section 3's measurements | M |
+| 2.6 | Master style sheet and input limits:<br>• `script`, `iframe`, `object`, `embed`, `form` hidden;<br>• maximum HTML size, above which Mulberry falls back to the text view | hostile samples (deep nesting, huge tables, oversized input) end in bounded time without a crash | S–M |
+
+**Stage 2 done (2026-11-23):** `Libraries/HTMLView` (see its `README.md`),
+built with Mulberry; `html2png` renders any HTML file;
+`gmake -C Libraries/HTMLView check` renders 13 test pages and 8 generated
+stress pages. Findings and changes to the tasks above:
+- **litehtml moved to master** (section 3): with v0.10, 30 nested tables did
+  not finish within 60 s of CPU time.
+- **Limits** (task 2.6), checked before parsing by a quick scan of the tags
+  (Gumbo itself takes quadratic time in the nesting depth, so it cannot be
+  used to measure it): nesting depth 512, 20,000 elements (litehtml uses
+  about 12 KB and 30–60 µs per element: 12,000 table rows took 1.5 s and
+  700 MB), 16 MB of HTML. A rejected mail is shown as text.
+- **Hidden elements:** frames, embedded objects, media and form controls;
+  the *content* of `<form>` stays visible (some newsletters wrap everything
+  in a form), unlike the task's first wording.
+- **Added for mail:** `cellpadding` (not mapped by litehtml; style rules for
+  values 0–40, overridable by the mail's CSS) and `<ol type>` / `<ul type>`.
+- **Text:** fallback per character, colour emoji (Twitter Color Emoji, the
+  only colour font installed here; keycaps fall back to a text keycap),
+  ligatures, all decoration styles, `text-transform` with Unicode case
+  mapping, KOI8-R and windows-1252 pages detected through `<meta charset>`.
+- **Known litehtml limitations:** `letter-spacing` and `word-spacing` are
+  ignored; **no bidirectional text**: right-to-left words are shaped and
+  joined correctly but stay in source order from left to right, and
+  `dir="rtl"` is ignored. Fixing this needs a change in litehtml (a candidate
+  for the fork, stage 9.4).
+- Typical mail: 10–25 ms to parse and lay out, 3–25 ms to draw, 20–35 MB in
+  total for the test tool (fonts included).
+
+### 11.5 Stage 3: read-only viewer in JX (behind the preference)
+
+| # | Task | Check | Size |
+|---|---|---|---|
+| 3.1 | JX fork (`freebsd` branch): public accessor for `JXWindowPainter::GetDrawable()`; update the submodule pointer | JX and Mulberry build | S |
+| 3.2 | `CHTMLDisplay` (`Linux/Sources/Formatting`), a `JXScrollableWidget`:<br>• `Draw()` creates a Cairo Xlib surface on the drawable, using the visual from `JXDisplay`, then translates, clips and calls the core;<br>• resizing lays out again at the new width and sets the bounds to the document height.<br>Compiled only with `HTML_VIEWER`; not created anywhere yet | both configurations build; Mulberry unchanged | M |
+| 3.3 | Preference "use the HTML viewer" (boolean, default off) in `CPreferences` and the preferences file; no dialog UI yet | old preference files load; the value is saved and read back | S |
+| 3.4 | Preview pane (`CMessageView`):<br>• `CHTMLDisplay` created next to `mText` in `mTextFocus`, hidden;<br>• `ResetText()` shows it instead of `mText` when the preference is on, the view is formatted, the part is `text/html` and styles are on. The part's UTF-16 text is converted to UTF-8;<br>• the message header (`ParseHeader` text) becomes an escaped block at the top of the HTML document;<br>• `mText` keeps being filled as today (hidden), so Save, Print and reply quoting keep working on the text version;<br>• Find, Select All and Copy are disabled while the HTML view is shown (until stage 6) | preference off: nothing changes. On: HTML mail shows in the preview pane; plain-text mail, the plain and raw view modes, and switching messages all go back to the text widget; no command crashes | L |
+| 3.5 | Message window (`CMessageWindow`): the same behaviour. Its `ResetText()` duplicates the preview pane's, so the shared logic moves into one helper used by both | same checks as 3.4, in a separate message window | M |
+| 3.6 | Scrolling and keys, as in `CSpacebarEditView`:<br>• mouse wheel, Page Up/Down, Home/End;<br>• Space scrolls, then goes to the next message at the bottom;<br>• Tab goes to the next new message in the preview;<br>• Delete and Backspace behave as in the text view | the same keys work in both views | M |
+| 3.7 | Font scale (`mFontScale`) becomes a zoom in the core; default font family and size from `mHTMLTextFontInfo` | zoom buttons work; the preference font is used | S |
+| 3.8 | Redraw only the exposed area; check speed on the large newsletter | scrolling stays smooth; layout + paint below about 150 ms | S |
+
+**Milestone after stage 3:** HTML mail is readable in Mulberry for testing
+(preference on).
+
+### 11.6 Stage 4: links
+
+| # | Task | Check | Size |
+|---|---|---|---|
+| 4.1 | Hover: hand cursor (`JXCursor`); the link target is shown, as in the text view | cursor and target follow the mouse | S–M |
+| 4.2 | Click:<br>• `http(s):` and other URLs through the existing launch code (`CFormattedTextDisplay::LaunchURL`);<br>• `mailto:` opens the composer;<br>• `#name` scrolls inside the message | each kind works | M |
+| 4.3 | Context menu "Open link" and "Copy link", same entries as the text view (`OnOpenLink`, `OnCopyLink`) | both entries work | S |
+
+### 11.7 Stage 5: images and remote content
+
+| # | Task | Check | Size |
+|---|---|---|---|
+| 5.1 | Image decoding in the core: PNG (libpng, already a Cairo dependency), JPEG (libjpeg-turbo), GIF first frame (giflib); WebP optional. Limits on bytes and pixels | `html2png` samples; oversized images rejected | M |
+| 5.2 | `data:` URIs (base64 and percent-encoded) | sample with embedded images | S |
+| 5.3 | `cid:` images:<br>• the core asks the host;<br>• Mulberry finds the sibling part with that Content-ID in the enclosing `multipart/related` (`CAttachment` tree, `CMIMEContent::GetContentId()`) and reads it with the existing `ReadAttachment` code;<br>• the core lays out again once sizes are known | Thunderbird and Apple Mail messages with inline images | M–L |
+| 5.4 | Part selection: check that `FirstDisplayPart()` picks the `text/html` part inside `multipart/related` within `multipart/alternative`; inline images stay listed in the parts table as today | sample messages of each structure | S |
+| 5.5 | Remote content blocked:<br>• no network access;<br>• placeholders sized from `width`/`height`;<br>• remote style sheets and fonts ignored;<br>• count of blocked items kept for 5.6 | no connection is attempted (checked with a local HTTP server log) | S |
+| 5.6 | Information bar "Remote content blocked – Load" above the viewer, in the preview pane and the message window | appears only when something was blocked | M |
+| 5.7 | "Load": fetch through Mulberry's HTTP client (`Sources_Common/HTTP`), synchronously first, with a wait cursor, size and time limits, and a cache per message | images appear after Load; limits respected | M–L |
+| 5.8 | Later: per-sender "always load" list (preference) | list saved; applied on open | M |
+
+**Milestone after stage 5:** usable for daily reading.
+
+### 11.8 Stage 6: selection, copy, find
+
+| # | Task | Check | Size |
+|---|---|---|---|
+| 6.1 | Plain-text extraction of the rendered document (walks the render tree); enables Select All + Copy | copied text matches the visible text, block by block | S–M |
+| 6.2 | Hit-testing: mouse position → text run and character offset (render tree, plus HarfBuzz cluster positions) | debug output on click | M |
+| 6.3 | Selection:<br>• drag, double-click for a word;<br>• highlight drawing;<br>• copy as plain text through JX's selection manager | select, copy, paste into the composer | L |
+| 6.4 | Reply and forward "Quote selection" use the HTML view's selection | quoting a selection works in both views | S–M |
+| 6.5 | Find / Find Next on the extracted text: highlight the match and scroll to it | finds across blocks and table cells | M |
+
+### 11.9 Stage 7: printing
+
+| # | Task | Check | Size |
+|---|---|---|---|
+| 7.1 | Core: lay out at page width and render into a Cairo PostScript surface; page breaks by slicing, avoiding breaks inside a line of text; header block on page 1 | PS file from `html2png`'s print mode | M–L |
+| 7.2 | Mulberry's Print command for the HTML view sends this PostScript to the existing print path (`SetPSPrinter`/`PrintPS`, `lpr`), with page setup | prints a newsletter correctly | M |
+
+**Milestone after stage 7:** the same features as the text view.
+
+### 11.10 Stage 8: user switch and default
+
+| # | Task | Check | Size |
+|---|---|---|---|
+| 8.1 | Preferences dialog: checkbox "Display HTML messages formatted (new viewer)" | toggling it takes effect on the next message | S |
+| 8.2 | Per-message switch (menu or toolbar) between the HTML viewer and the text rendering. If it is a new view mode, it goes at the end of `EView`, so saved window states stay valid | switching back and forth keeps the scroll position near the top | M |
+| 8.3 | Default on, after a testing period | new preference files have it on; existing ones keep their choice | S |
+
+### 11.11 Stage 9: packaging and follow-ups
+
+| # | Task | Check | Size |
+|---|---|---|---|
+| 9.1 | Linux: `--with-system-harfbuzz` and `--with-system-cairo` (pkg-config). The default Linux behaviour is still to be discussed (section 10.7) | both builds work on a Linux machine | M |
+| 9.2 | Documentation: README build section; licence texts installed and shown in About (litehtml BSD-3, Gumbo Apache-2.0, Cairo MPL-1.1, pixman MIT, HarfBuzz MIT) | texts present in the install | S |
+| 9.3 | Optional fuzzing of the core (the `html2png` path) with mail corpora | no crashes after a set run time | M |
+| 9.4 | Move the submodules to own forks when the first patch is needed, as for the other libraries | `git submodule sync` and a fresh-clone build | S |
+
+### 11.12 Decisions to take before the stage concerned
+
+| Decision | Options | Proposal |
+|---|---|---|
+| litehtml build (1.5) | litehtml's own CMake (new build tool `cmake`), or a small Makefile of ours | **Decided: CMake** (2026-11-23) |
+| Image decoders (5.1) | system libjpeg-turbo + giflib (+ libwebp), or bundled `stb_image` (no releases, so the HEAD of its branch) | system libraries: security fixes arrive through the system |
+| Message header (3.4) | escaped block inside the HTML document, or a separate text widget above the viewer | inside the document: one scroll area, simplest |
+| Default Linux HarfBuzz/Cairo (9.1) | bundled static or system shared | to be discussed (section 10.7) |

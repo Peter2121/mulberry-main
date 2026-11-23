@@ -7,7 +7,9 @@
 # $Revision$
 #
 
-.PHONY: all clean distclean jxinit jxuninit
+.PHONY: all clean distclean jxinit jxuninit htmldeps htmldeps-pixman \
+	htmldeps-cairo htmldeps-harfbuzz htmldeps-litehtml htmlview \
+	htmlview-clean htmldeps-clean
 
 DIRS = CICalendar vCard XMLLib
 
@@ -23,7 +25,66 @@ SKIPJX =
 # (may be needed for Win32 where system OpenSSL is not available).
 OPENSSL_DIR =
 
-all: jx
+#
+# HTML message viewer (LITEHTML-VIEWER-PLAN.md, section 11): the static
+# libraries pixman, Cairo, HarfBuzz (Meson) and litehtml (CMake) are built
+# from their submodules into htmldeps/build and installed into
+# htmldeps/dist; the submodules themselves stay clean.  Each library is
+# configured once; later runs only rebuild what changed.
+#
+HTML_VIEWER = @HTML_VIEWER@
+
+# set this variable to something non empty to skip the build of the HTML
+# viewer's libraries (they are already built and up to date)
+SKIPHTMLDEPS =
+
+# Only the compiler: configure may add a language standard option (e.g.
+# "gcc14 -std=gnu23"), the libraries choose their own
+HTMLDEPS_CC = $(firstword @CC@)
+HTMLDEPS_CXX = $(firstword @CXX@)
+MESON = @MESON@
+NINJA = @NINJA@
+CMAKE = @CMAKE@
+
+HTMLDEPS = $(CURDIR)/htmldeps
+HTMLDEPS_BUILD = $(HTMLDEPS)/build
+HTMLDEPS_DIST = $(HTMLDEPS)/dist
+# Meson installs .pc files into libdata/pkgconfig on FreeBSD and into
+# lib/pkgconfig on Linux: both must be searched, or Cairo silently uses a
+# system pixman
+HTMLDEPS_PKG_CONFIG_PATH = $(HTMLDEPS_DIST)/libdata/pkgconfig:$(HTMLDEPS_DIST)/lib/pkgconfig
+MESON_OPTIONS = --prefix=$(HTMLDEPS_DIST) --libdir=lib --buildtype=release \
+	--default-library=static --wrap-mode=nodownload
+
+PIXMAN_OPTIONS = -Dtests=disabled -Ddemos=disabled -Dgtk=disabled \
+	-Dlibpng=disabled -Dopenmp=disabled
+
+CAIRO_OPTIONS = -Dglib=disabled -Dxlib=enabled -Dxcb=disabled \
+	-Dfreetype=enabled -Dfontconfig=enabled -Dpng=enabled -Dzlib=enabled \
+	-Dtests=disabled -Dspectre=disabled -Dlzo=disabled \
+	-Dsymbol-lookup=disabled -Dtee=disabled -Dgtk2-utils=disabled \
+	-Ddwrite=disabled -Dquartz=disabled
+
+HARFBUZZ_OPTIONS = -Dfreetype=enabled -Dglib=disabled -Dgobject=disabled \
+	-Dcairo=disabled -Dchafa=disabled -Dpng=disabled -Dzlib=disabled \
+	-Dicu=disabled -Dgraphite=disabled -Dgraphite2=disabled \
+	-Dfontations=disabled -Dgdi=disabled -Ddirectwrite=disabled \
+	-Dcoretext=disabled -Dharfrust=disabled -Dkbts=disabled -Dwasm=disabled \
+	-Draster=disabled -Dvector=disabled -Dgpu=disabled -Dgpu_demo=disabled \
+	-Dsubset=disabled -Dtests=disabled -Dintrospection=disabled \
+	-Ddocs=disabled -Ddoc_tests=false -Dutilities=disabled \
+	-Dbenchmark=disabled
+
+LITEHTML_OPTIONS = -G Ninja -DCMAKE_MAKE_PROGRAM=$(NINJA) \
+	-DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$(HTMLDEPS_DIST) \
+	-DCMAKE_C_COMPILER=$(HTMLDEPS_CC) -DCMAKE_CXX_COMPILER=$(HTMLDEPS_CXX) \
+	-DCMAKE_POSITION_INDEPENDENT_CODE=ON -DLITEHTML_BUILD_TESTING=OFF
+
+ifeq ($(HTML_VIEWER),yes)
+HTML_TARGETS = htmlview
+endif
+
+all: jx $(HTML_TARGETS)
 	for dir in $(DIRS); do \
 		$(MAKE) -C $$dir $@ || exit 1; \
 	done
@@ -39,7 +100,72 @@ jx: jxinit
 		$(MAKE) J_BUILD_BOTH_LIB=1 -C JX $(JX_TARGET); \
 	fi
 
-clean:
+#
+# HTML viewer libraries
+#
+
+# Configure (only when not done yet: a failed earlier setup is removed
+# first), build, and install what changed (installed files keep their time
+# stamps, so Mulberry is not relinked for nothing)
+define meson_build
+	@if [ ! -f $(HTMLDEPS_BUILD)/$(1)/build.ninja ]; then \
+		rm -rf $(HTMLDEPS_BUILD)/$(1); \
+		echo "Configuring $(1) (Meson)"; \
+		PKG_CONFIG_PATH=$(HTMLDEPS_PKG_CONFIG_PATH) CC="$(HTMLDEPS_CC)" \
+		CXX="$(HTMLDEPS_CXX)" $(MESON) setup $(HTMLDEPS_BUILD)/$(1) $(1) \
+			$(MESON_OPTIONS) $(2) || exit 1; \
+	fi
+	$(NINJA) -C $(HTMLDEPS_BUILD)/$(1)
+	$(MESON) install -C $(HTMLDEPS_BUILD)/$(1) --no-rebuild --only-changed --quiet
+endef
+
+htmldeps:
+	@if test -n "$(SKIPHTMLDEPS)" ; then \
+		echo "Skipping build of the HTML viewer libraries as requested."; \
+	else \
+		$(MAKE) htmldeps-cairo htmldeps-harfbuzz htmldeps-litehtml || exit 1; \
+	fi
+
+htmldeps-pixman:
+	$(call meson_build,pixman,$(PIXMAN_OPTIONS))
+
+# Cairo is configured against the staged pixman (found through pkg-config)
+htmldeps-cairo: htmldeps-pixman
+	$(call meson_build,cairo,$(CAIRO_OPTIONS))
+
+# When ragel is installed, HarfBuzz's build regenerates its state machines
+# into its source tree (only "#line" numbers differ), leaving the submodule
+# modified.  A stub reporting an old version makes Meson ignore ragel.
+HARFBUZZ_NATIVE = $(HTMLDEPS_BUILD)/harfbuzz-native
+
+htmldeps-harfbuzz:
+	@mkdir -p $(HARFBUZZ_NATIVE)
+	@printf '#!/bin/sh\necho "Ragel State Machine Compiler version 0.0 (stub: not used by Mulberry builds)"\n' > $(HARFBUZZ_NATIVE)/ragel
+	@chmod +x $(HARFBUZZ_NATIVE)/ragel
+	@printf "[binaries]\nragel = '%s'\n" $(HARFBUZZ_NATIVE)/ragel > $(HARFBUZZ_NATIVE)/native.ini
+	$(call meson_build,harfbuzz,--native-file=$(HARFBUZZ_NATIVE)/native.ini $(HARFBUZZ_OPTIONS))
+
+htmldeps-litehtml:
+	@if [ ! -f $(HTMLDEPS_BUILD)/litehtml/build.ninja ]; then \
+		rm -rf $(HTMLDEPS_BUILD)/litehtml; \
+		echo "Configuring litehtml (CMake)"; \
+		$(CMAKE) -S litehtml -B $(HTMLDEPS_BUILD)/litehtml \
+			$(LITEHTML_OPTIONS) || exit 1; \
+	fi
+	$(CMAKE) --build $(HTMLDEPS_BUILD)/litehtml
+	$(CMAKE) --install $(HTMLDEPS_BUILD)/litehtml > /dev/null
+
+# The viewer core and its test tool html2png
+htmlview: htmldeps
+	$(MAKE) -C HTMLView all
+
+htmlview-clean:
+	@if [ -f HTMLView/Makefile ]; then $(MAKE) -C HTMLView clean; fi
+
+htmldeps-clean:
+	rm -rf $(HTMLDEPS)
+
+clean: htmlview-clean htmldeps-clean
 	$(MAKE) -C JX clean
 	for dir in $(DIRS); do \
 		$(MAKE) -C $$dir $@; \
@@ -49,7 +175,7 @@ clean:
 		cd "$(OPENSSL_DIR)" && make $@; \
 	fi
 
-distclean:
+distclean: htmlview-clean htmldeps-clean
 	$(MAKE) -C JX clean
 	for dir in $(DIRS); do \
 		$(MAKE) -C $$dir $@; \

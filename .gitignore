@@ -147,6 +147,15 @@ Sources_Common/Timezones/zoneinfo-backup-*.tar.gz
 # Generated emoji table (built from CLDR annotations)
 Sources_Common/i18n/Charsets/CEmojiTable.h
 
+# HTML viewer: build and staging directories of pixman, Cairo, HarfBuzz and
+# litehtml, and the viewer core's build products
+Libraries/htmldeps/
+Libraries/HTMLView/Makefile
+Libraries/HTMLView/obj/
+Libraries/HTMLView/libHTMLView.a
+Libraries/HTMLView/html2png
+Libraries/HTMLView/tests/out/
+
 # Build artifacts
 Linux/Includes/
 debian/.debhelper/

@@ -27,6 +27,8 @@
 #   -c DIR      Unicode CLDR directory (the one containing
 #               common/annotations/en.xml) used to generate the emoji text
 #               table; without it the table is empty
+#   -n          build without the HTML message viewer (litehtml, Cairo,
+#               HarfBuzz); meson, ninja and cmake are then not needed
 #   -h          show this help
 #
 # The build needs network access: timezone data is downloaded from IANA.
@@ -52,6 +54,7 @@ JOBS=$(sysctl -n hw.ncpu 2>/dev/null || echo 1)
 LAYOUT=		# system, user, or empty: not given
 STAGE_DIR=
 CLDR=
+HTML_VIEWER=yes
 
 set_layout() {
 	[ -z "$LAYOUT" ] || [ "$LAYOUT" = "$1" ] ||
@@ -59,7 +62,7 @@ set_layout() {
 	LAYOUT=$1
 }
 
-while getopts g:j:sud:c:h opt; do
+while getopts g:j:sud:c:nh opt; do
 	case $opt in
 	g) GCC_VERSION=$OPTARG ;;
 	j) JOBS=$OPTARG ;;
@@ -67,6 +70,7 @@ while getopts g:j:sud:c:h opt; do
 	u) set_layout user ;;
 	d) STAGE_DIR=$OPTARG ;;
 	c) CLDR=$OPTARG ;;
+	n) HTML_VIEWER= ;;
 	h) usage; exit 0 ;;
 	*) usage >&2; exit 2 ;;
 	esac
@@ -138,6 +142,15 @@ check_requirements() {
 	if [ -n "$CLDR" ]; then
 		need /usr/local/bin/python3 python3
 	fi
+	if [ -n "$HTML_VIEWER" ]; then
+		# HTML viewer: pixman, Cairo and HarfBuzz are built with Meson,
+		# litehtml with CMake (static, inside the source tree)
+		need /usr/local/bin/meson meson
+		need /usr/local/bin/ninja ninja
+		need /usr/local/bin/cmake cmake-core
+		need /usr/local/include/png.h png
+		need /usr/local/include/X11/extensions/Xrender.h libXrender
+	fi
 	if [ -n "$missing" ]; then
 		die "missing packages, install them with:
     pkg install$missing"
@@ -168,7 +181,9 @@ Remove that package and retry."
 
 check_submodules() {
 	missing=
-	for d in JX CICalendar vCard XMLLib vzic; do
+	set -- JX CICalendar vCard XMLLib vzic
+	[ -z "$HTML_VIEWER" ] || set -- "$@" litehtml pixman cairo harfbuzz
+	for d in "$@"; do
 		[ -e "Libraries/$d/.git" ] || missing="$missing Libraries/$d"
 	done
 	[ -z "$missing" ] && return 0
@@ -193,6 +208,7 @@ do_build() {
 			--with-mulberry-dir=lib/mulberry \
 			--with-help-dir=share/doc/mulberry
 	fi
+	[ -n "$HTML_VIEWER" ] || set -- "$@" --disable-html-viewer
 
 	if [ ! -x configure ] || [ configure.in -nt configure ]; then
 		note "running autoconf"
@@ -419,7 +435,7 @@ do_clean() {
 	if [ -f Makefile ]; then
 		$MAKE_CMD distclean || true
 	fi
-	rm -rf "$JXDIST"
+	rm -rf "$JXDIST" Libraries/htmldeps
 	note "clean complete"
 }
 

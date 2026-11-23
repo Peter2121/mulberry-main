@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Text styles</title>
+<style>
+  body { font-family: sans-serif; margin: 16px; }
+  .serif { font-family: serif; }
+  .mono { font-family: monospace; }
+  .deco span { margin-right: 12px; }
+</style>
+</head>
+<body>
+<h1>Heading 1: office, fine, waffle (ligatures fi, ffl)</h1>
+<h2>Heading 2</h2>
+<h3>Heading 3</h3>
+<h4>Heading 4</h4>
+<h5>Heading 5</h5>
+<h6>Heading 6</h6>
+
+<p>Normal text with <b>bold</b>, <i>italic</i>, <b><i>bold italic</i></b>,
+<small>small</small>, <big>big</big>, <code>code</code>, <kbd>kbd</kbd>,
+H<sub>2</sub>O, E = mc<sup>2</sup>, <mark>marked</mark>, <del>deleted</del>,
+<ins>inserted</ins> and <a href="https://example.org/">a link</a>.</p>
+
+<p class="serif">Serif paragraph: The quick brown fox jumps over the lazy dog.
+<b>Bold.</b> <i>Italic.</i></p>
+<p class="mono">Monospace paragraph: 0123456789 iIlL1| oO0</p>
+
+<p class="deco">
+<span style="text-decoration: underline">underline</span>
+<span style="text-decoration: overline">overline</span>
+<span style="text-decoration: line-through">line-through</span>
+<span style="text-decoration: underline double">double</span>
+<span style="text-decoration: underline dotted">dotted</span>
+<span style="text-decoration: underline dashed">dashed</span>
+<span style="text-decoration: underline wavy red">wavy red</span>
+<span style="text-decoration: underline; text-decoration-thickness: 4px">thick 4px</span>
+</p>
+
+<p>text-transform:
+<span style="text-transform: uppercase">uppercase straße, ελληνικά, кириллица</span> /
+<span style="text-transform: lowercase">LOWERCASE ÀÉÎÕÜ</span> /
+<span style="text-transform: capitalize">capitalize every word, émile, ñandú</span></p>
+
+<p style="font-size: 10px">10px text. The quick brown fox jumps over the lazy dog.</p>
+<p style="font-size: 13px">13px text. The quick brown fox jumps over the lazy dog.</p>
+<p style="font-size: 20px">20px text. The quick brown fox jumps over the lazy dog.</p>
+<p style="font-size: 32px">32px text. The quick brown fox.</p>
+
+<p style="color: #c00000">Red text</p>
+<p style="color: #fff; background: #336699; padding: 6px">White on blue, with padding</p>
+<p style="letter-spacing: 3px">Letter spacing 3px</p>
+<p style="word-spacing: 12px">Word spacing twelve pixels here</p>
+<p style="text-align: center">Centred paragraph</p>
+<p style="text-align: right">Right-aligned paragraph</p>
+<p style="text-align: justify; width: 400px">Justified paragraph: Lorem ipsum dolor sit amet,
+consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna
+aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<pre>Preformatted text
+    with   spaces	and a tab
+and a very long line that does not wrap: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa</pre>
+<blockquote>A blockquote, as used for quoting.</blockquote>
+<hr>
+<p>Long word that must overflow or break: Donaudampfschifffahrtselektrizitätenhauptbetriebswerkbauunterbeamtengesellschaft</p>
+</body>
+</html>

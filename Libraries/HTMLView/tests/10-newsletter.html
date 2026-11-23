@@ -1,0 +1,104 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Example Shop newsletter</title>
+<!-- Synthetic sample in the style of a table-based marketing newsletter -->
+<style type="text/css">
+  body { margin: 0; padding: 0; background-color: #eeeeee; }
+  table { border-collapse: collapse; }
+  .container { width: 600px; }
+  .h1 { font-family: Helvetica, Arial, sans-serif; font-size: 28px; line-height: 34px; color: #222222; font-weight: bold; }
+  .text { font-family: Helvetica, Arial, sans-serif; font-size: 15px; line-height: 22px; color: #555555; }
+  .small { font-family: Helvetica, Arial, sans-serif; font-size: 11px; line-height: 16px; color: #999999; }
+  .btn a { display: inline-block; padding: 12px 28px; background: #e4572e; color: #ffffff !important;
+           text-decoration: none; border-radius: 3px; font-weight: bold; font-family: Arial, sans-serif; }
+  @media only screen and (max-width: 620px) {
+    .container { width: 100% !important; }
+    .col { display: block !important; width: 100% !important; }
+  }
+</style>
+</head>
+<body style="margin:0; padding:0; background-color:#eeeeee;">
+<div style="display:none; max-height:0; overflow:hidden;">Preheader: this week's offers, hidden in the body.</div>
+<table width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#eeeeee">
+<tr><td align="center" style="padding: 20px 10px;">
+
+  <table class="container" width="600" cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff">
+    <tr>
+      <td bgcolor="#2b2d42" style="padding: 18px 24px;">
+        <table width="100%" cellpadding="0" cellspacing="0" border="0">
+          <tr>
+            <td style="font-family: Georgia, serif; font-size: 22px; color: #ffffff;">Example&nbsp;Shop</td>
+            <td align="right" class="small" style="color:#cfd2e0;"><a href="https://example.org/view" style="color:#cfd2e0;">View in browser</a></td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+    <tr>
+      <td height="180" bgcolor="#8d99ae" align="center" style="font-family: Arial, sans-serif; font-size: 14px; color:#ffffff;">
+        <img src="https://example.org/hero.jpg" width="600" height="180" alt="Hero image (remote, not loaded)" style="display:block; border:0;" />
+      </td>
+    </tr>
+    <tr>
+      <td style="padding: 28px 32px 8px 32px;" class="h1">Spring sale: up to 40% off</td>
+    </tr>
+    <tr>
+      <td style="padding: 0 32px 20px 32px;" class="text">
+        Hello Alex,<br /><br />
+        Our spring collection is here. For one week only, everything in the garden range is
+        reduced &mdash; including the <strong>bestselling watering can</strong> and the new
+        <em>folding chairs</em>.
+      </td>
+    </tr>
+    <tr>
+      <td align="center" class="btn" style="padding: 0 32px 28px 32px;">
+        <a href="https://example.org/sale">Shop the sale</a>
+      </td>
+    </tr>
+    <tr>
+      <td style="padding: 0 24px 24px 24px;">
+        <table width="100%" cellpadding="0" cellspacing="0" border="0">
+          <tr>
+            <td class="col" width="33%" valign="top" style="padding: 8px;">
+              <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #e5e5e5;">
+                <tr><td height="100" bgcolor="#edf2f4" align="center" class="small">image</td></tr>
+                <tr><td class="text" style="padding: 10px; font-size: 14px;"><b>Watering can</b><br />
+                  <span style="color:#999; text-decoration: line-through;">24.90&nbsp;€</span>
+                  <span style="color:#e4572e; font-weight:bold;">14.90&nbsp;€</span></td></tr>
+              </table>
+            </td>
+            <td class="col" width="33%" valign="top" style="padding: 8px;">
+              <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #e5e5e5;">
+                <tr><td height="100" bgcolor="#edf2f4" align="center" class="small">image</td></tr>
+                <tr><td class="text" style="padding: 10px; font-size: 14px;"><b>Folding chair</b><br />
+                  <span style="color:#e4572e; font-weight:bold;">39.00&nbsp;€</span></td></tr>
+              </table>
+            </td>
+            <td class="col" width="33%" valign="top" style="padding: 8px;">
+              <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #e5e5e5;">
+                <tr><td height="100" bgcolor="#edf2f4" align="center" class="small">image</td></tr>
+                <tr><td class="text" style="padding: 10px; font-size: 14px;"><b>Seed set</b><br />
+                  <span style="color:#e4572e; font-weight:bold;">7.50&nbsp;€</span></td></tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+    <tr>
+      <td bgcolor="#f7f7f7" style="padding: 20px 32px;" class="small" align="center">
+        You receive this mail because you subscribed at example.org.<br />
+        <a href="https://example.org/unsubscribe" style="color:#999999;">Unsubscribe</a> &middot;
+        <a href="https://example.org/privacy" style="color:#999999;">Privacy</a><br />
+        Example Shop, 1 Sample Street, 00000 Exampletown
+        <img src="https://tracker.example.org/open.gif" width="1" height="1" alt="" />
+      </td>
+    </tr>
+  </table>
+
+</td></tr>
+</table>
+</body>
+</html>

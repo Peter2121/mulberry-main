@@ -1,0 +1,75 @@
+#
+# Makefile for Mulberry's HTML viewer core (libHTMLView.a) and its test tool
+# html2png.  See README.md and LITEHTML-VIEWER-PLAN.md (section 11).
+#
+# The core does not depend on JX or on the rest of Mulberry, and it is
+# compiled without Mulberry's prefix header.
+#
+# Compatibility: GNU
+#
+
+.PHONY: all clean distclean check
+
+CXX = @CXX@
+AR = @AR@
+O = .o
+A = .a
+
+# Static libraries built in ../htmldeps (see ../Makefile)
+DIST = ../htmldeps/dist
+LITEHTML_SRC = ../litehtml
+
+SYS_CFLAGS = @HTMLVIEW_SYS_CFLAGS@
+SYS_LIBS = @HTMLVIEW_SYS_LIBS@
+TOOL_LIBS = @HTMLVIEW_TOOL_LIBS@
+
+CPPFLAGS = -Iinclude -Isrc -I$(DIST)/include -I$(DIST)/include/litehtml \
+	-I$(DIST)/include/cairo -I$(DIST)/include/harfbuzz \
+	-I$(LITEHTML_SRC)/containers/cairo $(SYS_CFLAGS)
+CXXFLAGS = -std=gnu++17 -O2 -g -fPIC -Wall -Wextra -Wno-unused-parameter
+# The upstream container sources, compiled as they are
+UPSTREAM_CXXFLAGS = -std=gnu++17 -O2 -g -fPIC -w
+
+LIBRARY = libHTMLView$A
+SOURCES = Document Container Fonts TextTransform Limits
+UPSTREAM = container_cairo cairo_borders conic_gradient
+OBJS = $(SOURCES:%=obj/%$O) $(UPSTREAM:%=obj/upstream/%$O)
+
+DEPLIBS = $(DIST)/lib/liblitehtml$A $(DIST)/lib/libgumbo$A \
+	$(DIST)/lib/libharfbuzz$A $(DIST)/lib/libcairo$A \
+	$(DIST)/lib/libpixman-1$A
+
+TOOL = html2png
+
+all: $(LIBRARY) $(TOOL)
+
+obj/%$O: src/%.cpp
+	@mkdir -p obj
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -MMD -MP -c -o $@ $<
+
+obj/upstream/%$O: $(LITEHTML_SRC)/containers/cairo/%.cpp
+	@mkdir -p obj/upstream
+	$(CXX) $(CPPFLAGS) $(UPSTREAM_CXXFLAGS) -MMD -MP -c -o $@ $<
+
+obj/tools/%$O: tools/%.cpp
+	@mkdir -p obj/tools
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -MMD -MP -c -o $@ $<
+
+$(LIBRARY): $(OBJS)
+	rm -f $@
+	$(AR) rcs $@ $(OBJS)
+
+$(TOOL): obj/tools/html2png$O $(LIBRARY) $(DEPLIBS)
+	$(CXX) -o $@ obj/tools/html2png$O $(LIBRARY) $(DEPLIBS) $(SYS_LIBS) $(TOOL_LIBS)
+
+# Renders every test page (tests/*.html and generated stress pages) into
+# tests/out, with timings; fails if html2png crashes or hangs
+check: all
+	sh tests/run-tests.sh ./$(TOOL) tests tests/out
+
+clean:
+	rm -rf obj $(LIBRARY) $(TOOL) tests/out
+
+distclean: clean
+
+-include $(wildcard obj/*.d obj/upstream/*.d obj/tools/*.d)
