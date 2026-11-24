@@ -31,6 +31,8 @@
 namespace htmlview
 {
 
+// TODO(html-viewer-preferences): limits and time-outs may become preferences
+// (LITEHTML-VIEWER-PLAN.md, section 11.13)
 struct FetchSettings
 {
 	size_t		max_bytes = 16 * 1024 * 1024;			// per image (as the viewer's max_image_bytes)

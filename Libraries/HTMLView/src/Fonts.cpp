@@ -49,7 +49,9 @@ const double cHBScale = 64.0;
 // FT_GlyphSlot_Embolden (which Cairo uses to draw them) does
 const float cSyntheticBold = 1.0f / 24.0f;
 
-// litehtml asks for the width of the same words again and again
+// litehtml asks for the width of the same words again and again (entries
+// per font; cleared when full)
+// TODO(html-viewer-preferences): a cache parameter (section 11.13)
 const size_t cMaxWidthCache = 8192;
 
 // Decodes one UTF-8 sequence at s[i] and moves i past it.  Invalid or

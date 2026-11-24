@@ -39,6 +39,9 @@ struct Settings
 	int			screen_height = 1080;
 	std::string	language = "en";
 
+	// TODO(html-viewer-preferences): the limits below may become preferences
+	// (LITEHTML-VIEWER-PLAN.md, section 11.13)
+
 	// Limits against hostile input: larger or deeper documents are rejected
 	// (Load() returns an error status) and the host shows them as text
 	size_t		max_html_size = 16 * 1024 * 1024;	// bytes

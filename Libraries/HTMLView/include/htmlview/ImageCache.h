@@ -28,8 +28,8 @@ namespace htmlview
 class ImageCache
 {
 public:
-	// TODO(remote-image-cache-size): make the size a preference (see
-	// LITEHTML-VIEWER-PLAN.md, stage 5, remote images)
+	// TODO(html-viewer-preferences): the size will be a preference
+	// (LITEHTML-VIEWER-PLAN.md, section 11.13)
 	static const size_t cDefaultMaxBytes = 128 * 1024 * 1024;
 
 	explicit ImageCache(size_t max_bytes = cDefaultMaxBytes);

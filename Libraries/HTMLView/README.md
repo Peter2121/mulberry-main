@@ -95,7 +95,8 @@ libcurl's messages and the request and response headers go to
 
 `htmlview::ImageCache` keeps the downloaded images (encoded, by URL) in
 memory only, 128 MB by default (to become a preference:
-`TODO(remote-image-cache-size)`); when an image does not fit, the least
+`TODO(html-viewer-preferences)`, see `LITEHTML-VIEWER-PLAN.md` section
+11.13); when an image does not fit, the least
 recently used ones go first. `gmake check` runs its unit test
 (`tests/imagecache-test.cpp`) before the pages.
 

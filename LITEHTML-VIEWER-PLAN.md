@@ -881,7 +881,7 @@ done).**
   displayed at once, without network access; if all its remote images are
   cached, the button reads "Loaded Remote Images: YY", else it offers the
   missing ones. The size will become a preference later: a
-  `TODO(remote-image-cache-size)` comment at the constant in the code.
+  `TODO(html-viewer-preferences)` (section 11.13) comment at the constant in the code.
 - **Progressive display:** the message stays readable and scrollable; each
   image appears when it arrives; layouts are grouped (a few per second at
   most).
@@ -957,7 +957,7 @@ HTTPS download (w3.org) checked by hand.
 data as downloaded; `Get()` (counts as a use), `Contains()` (does not),
 `Put()` (replaces, removes the least recently used until the image fits; an
 image larger than the cache is not stored), `SetMaxBytes()`, `Clear()`;
-128 MB by default, with `TODO(remote-image-cache-size)` at the constant.
+128 MB by default, with `TODO(html-viewer-preferences)` (section 11.13) at the constant.
 Owned by the host: Mulberry keeps one for the session (all message views).
 Unit test `tests/imagecache-test.cpp` (13 checks) in `gmake check`.
 
@@ -1079,6 +1079,46 @@ switch, and it is the default for messages with HTML (stage 3 notes).*
 | 9.2 | Documentation: README build section; licence texts installed and shown in About (litehtml BSD-3, Gumbo Apache-2.0, Cairo MPL-1.1, pixman MIT, HarfBuzz MIT) | texts present in the install | S |
 | 9.3 | Optional fuzzing of the core (the `html2png` path) with mail corpora | no crashes after a set run time | M |
 | 9.4 | Move the submodules to own forks when the first patch is needed, as for the other libraries | `git submodule sync` and a fresh-clone build | S |
+
+### 11.13 Preferences for the new GUI toolkit (TODO)
+
+*Noted 2026-11-24, when the viewer was considered working.* There is no
+preference for the HTML viewer yet, on purpose: the user interface will be
+rewritten with another toolkit (probably FLTK), and the preferences dialog
+with it. Until then, the values below are constants. Each place in the code
+is marked `TODO(html-viewer-preferences)` (`grep -rn` finds them all).
+
+*Remote images: loading by default*
+- Today: never automatically; the "Load Remote Images" button, per
+  message; nothing remembered.
+- To add: permission to load them by default under some conditions. Ideas
+  to decide then:
+  - for all messages;
+  - for senders in the address book;
+  - for given senders or domains (a list);
+  - for messages that passed a signature check;
+  - never while disconnected (already so for the button).
+- Code: `CHTMLDisplay::SetContent()`, where such a load would start;
+  `LoadRemoteImages()` already does the rest.
+
+*Cache parameters*
+
+| Cache | Today | Where |
+|---|---|---|
+| Remote images, in memory, least recently used out | 128 MB | `htmlview::ImageCache::cDefaultMaxBytes`; `CHTMLDisplay::RemoteImageCache()` |
+| Remote images on disk (between sessions) | none (decided for now) | to design: location, size, expiry |
+| Text widths, per font | 8192 entries, cleared when full | `cMaxWidthCache`, `src/Fonts.cpp` |
+
+*Limits that may become preferences* (rather "advanced" settings; the
+defaults protect against hostile mail):
+
+| Limit | Today | Where |
+|---|---|---|
+| HTML size; nesting depth; elements | 16 MB; 512; 20000 | `htmlview::Settings` (`Document.h`) |
+| Image size: encoded; decoded | 16 MB; 40 million pixels | `htmlview::Settings` |
+| Image parts read from the message | 24 MB encoded | `cMaxImagePartSize`, `CHTMLDisplay.cpp` |
+| Remote images per load: count; total size | 200; 50 MB | `htmlview::FetchSettings` (`Fetcher.h`) |
+| Remote image: size; time-outs (connect, total) | 16 MB; 10 s, 30 s | `htmlview::FetchSettings` |
 
 ### 11.12 Decisions to take before the stage concerned
 

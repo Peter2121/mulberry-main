@@ -142,6 +142,7 @@ bool IsHTMLPart(const CAttachment* part)
 
 // The encoded size of an image part above which it is not read (the viewer
 // itself refuses more than 16 MB decoded)
+// TODO(html-viewer-preferences): with the viewer's limits (section 11.13)
 const unsigned long cMaxImagePartSize = 24 * 1024 * 1024;
 
 // The URLs of attached images shown below the message: a Content-ID no mail
@@ -517,6 +518,11 @@ bool CHTMLDisplay::SetContent(const unichar_t* html, const char* header, const S
 			mLayoutWidth = -1;
 			Layout();
 		}
+
+		// TODO(html-viewer-preferences): loading remote images by default
+		// under conditions set in the preferences (LITEHTML-VIEWER-PLAN.md,
+		// section 11.13) would start here: LoadRemoteImages() once the view
+		// is updated.  For now never: only the button loads them.
 	}
 
 	mImageMessage = NULL;
@@ -600,8 +606,8 @@ void CHTMLDisplay::ClearContent()
 // The session's remote images, shared by all views
 htmlview::ImageCache& CHTMLDisplay::RemoteImageCache()
 {
-	// TODO(remote-image-cache-size): the size (128 MB) will be a preference
-	// (htmlview/ImageCache.h)
+	// TODO(html-viewer-preferences): the size (128 MB) will be a preference
+	// (LITEHTML-VIEWER-PLAN.md, section 11.13)
 	static htmlview::ImageCache sCache;
 	return sCache;
 }
