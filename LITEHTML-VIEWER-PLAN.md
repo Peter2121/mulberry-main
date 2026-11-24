@@ -855,7 +855,7 @@ a classic table one):**
   (PNG, JPEG, CMYK JPEG, GIF, WebP with alpha; `cid:`, names, `data:`,
   backgrounds, remote, missing, broken).
 
-**Stage 5, second part: remote images, design (decided 2026-11-24; R1–R4
+**Stage 5, second part: remote images, design (decided 2026-11-24; R1–R5
 done).**
 
 *Behaviour*
@@ -1000,9 +1000,44 @@ Unit test `tests/imagecache-test.cpp` (13 checks) in `gmake check`.
   per load (`CLog::eLogHTTP`). The session holds libcurl's messages, the
   request and response headers, the failures and the images not shown,
   then "Remote images: N of M loaded" or "cancelled".
-- Left for R5: the button's state does not follow a change of connection
-  (it is checked again on click). In a narrow 3-pane preview the button may
-  be cut at the right edge.
+- The two limits found here are fixed in R5: the connection state and the
+  button's width.
+
+**R5 done (2026-11-24), to be tested in Mulberry.**
+- **Offline mode:** Mulberry does not broadcast connection changes, so the
+  display's idle task keeps running while the message has remote images.
+  - It checks the connection state every second and updates the button
+    (disabled offline; its hint says why).
+  - Going offline during a load cancels it. The images already received
+    stay shown and cached; the HTTP log records "cancelled
+    (disconnected)".
+  - While loading the task runs every 20 ms; without remote images it is
+    removed. The decision is taken in `CHTMLDisplay::UpdateRemoteTask()`.
+- **Progress text and details:** the labels are unchanged. The button's hint
+  gives the details:
+  - before loading: the privacy warning (the sender may learn that the
+    message was read);
+  - while loading: "Downloading N images: n finished, f failed so far";
+  - after loading: images shown of the total, failures, images refused
+    (not images, or over the limits), a cancellation and its reason, and
+    "Click to try the M missing ones again" when possible;
+  - when every image came from the memory cache: "from the memory cache".
+- **Button width:** it fits its label (`JFontManager::GetStringWidth()`),
+  so a narrow 3-pane preview cuts it less often. While loading, the width
+  is that of "n/XX" with n = XX, so the button does not jump.
+- **Shared code:** both views call
+  `CHTMLDisplay::UpdateRemoteImagesButton(button, html_shown)`.
+- **Per-message limits checked with the two real newsletters** of
+  `tests/*.eml`, offline (URLs counted, nothing downloaded):
+  - 42 and 9 distinct remote images on 4 and 2 hosts, among them 4 and 3
+    1×1 tracking pixels;
+  - layout takes about 1 ms, so the 250 ms grouping of layouts costs
+    nothing;
+  - the limits (200 images and 50 MB per load, 16 MB per image) leave a wide
+    margin.
+  - The image sizes were not measured: that needs downloading, which
+    contacts the senders' tracking servers. Check in Mulberry with the HTTP
+    log.
 
 **Milestone after stage 5:** usable for daily reading.
 

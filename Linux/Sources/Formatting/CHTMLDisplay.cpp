@@ -38,6 +38,8 @@
 
 #include <JXColormap.h>
 #include <JXDisplay.h>
+#include <JXTextButton.h>
+#include <JFontManager.h>
 #include <JXIdleTask.h>
 #include <JXScrollbar.h>
 #include <JXWindow.h>
@@ -317,6 +319,11 @@ CAttachment* FindHTML(CAttachment* part)
 // shortest time between two layouts for images that arrived (ms)
 const unsigned long cRemotePumpPeriod = 20;
 const unsigned long cRemoteRelayoutPeriod = 250;
+// Otherwise, while the message has remote images: how often the connection
+// state is checked (Mulberry does not broadcast it)
+const unsigned long cRemoteWatchPeriod = 1000;
+// Room around the button's label (borders included)
+const JCoordinate cRemoteButtonMargin = 12;
 
 unsigned long Milliseconds()
 {
@@ -381,6 +388,10 @@ CHTMLDisplay::CHTMLDisplay(JXContainer* enclosure,
 	  mRemoteRequested(false),
 	  mFetchTotal(0),
 	  mFetchDone(0),
+	  mFetchFailed(0),
+	  mFetchRefused(0),
+	  mFetchCancelled(NULL),
+	  mWasConnected(true),
 	  mRelayoutPending(false),
 	  mRedrawPending(false),
 	  mLastRelayout(0)
@@ -403,7 +414,7 @@ CHTMLDisplay::CHTMLDisplay(JXContainer* enclosure,
 
 CHTMLDisplay::~CHTMLDisplay()
 {
-	StopRemoteImages();
+	StopRemoteImages("view closed");
 	delete mRemoteTask;
 }
 
@@ -456,10 +467,16 @@ bool CHTMLDisplay::SetContent(const unichar_t* html, const char* header, const S
 	// document
 	if (!msg || (msg != mRemoteMessage))
 	{
-		StopRemoteImages();
+		StopRemoteImages("another message shown");
 		mRemoteRequested = false;
+		mFetchTotal = 0;
+		mFetchDone = 0;
+		mFetchFailed = 0;
+		mFetchRefused = 0;
+		mFetchCancelled = NULL;
 	}
 	mRemoteMessage = msg;
+	mWasConnected = CConnectionManager::sConnectionManager.IsConnected();
 
 	// The documents ask for their images while they load and lay out: the
 	// message is only used then (LoadImageData())
@@ -514,6 +531,7 @@ bool CHTMLDisplay::SetContent(const unichar_t* html, const char* header, const S
 	}
 	ScrollTo(0, 0);
 	Refresh();
+	UpdateRemoteTask();
 	RemoteImagesChanged();
 	return true;
 }
@@ -563,7 +581,7 @@ std::string CHTMLDisplay::AttachedImagesHTML(CMessage* msg, const htmlview::Sett
 
 void CHTMLDisplay::ClearContent()
 {
-	StopRemoteImages();
+	StopRemoteImages("message no longer shown as HTML");
 	mRemoteMessage = NULL;
 	mRemoteRequested = false;
 	mLoadedURLs.clear();
@@ -573,6 +591,7 @@ void CHTMLDisplay::ClearContent()
 	mLayoutWidth = -1;
 	Layout();
 	Refresh();
+	UpdateRemoteTask();
 	RemoteImagesChanged();
 }
 
@@ -610,30 +629,74 @@ bool CHTMLDisplay::ApplyCachedRemoteImages()
 	return relayout;
 }
 
-cdstring CHTMLDisplay::GetRemoteImagesLabel(bool& visible, bool& enabled) const
+void CHTMLDisplay::UpdateRemoteImagesButton(JXTextButton* button, bool html_shown) const
 {
-	visible = false;
-	enabled = false;
-	if (!mDocument)
-		return cdstring::null_str;
-	const size_t total = mDocument->GetRemoteImageURLs().size();
-	if (total == 0)
-		return cdstring::null_str;
+	const size_t total = mDocument ? mDocument->GetRemoteImageURLs().size() : 0;
+	if (!html_shown || (total == 0))
+	{
+		button->Hide();
+		return;
+	}
 
-	visible = true;
+	const bool connected = CConnectionManager::sConnectionManager.IsConnected();
 	const size_t missing = (total > mLoadedURLs.size()) ? total - mLoadedURLs.size() : 0;
+	const int loaded = mDocument->GetLoadedRemoteImages();
 	char label[80];
+	char sizing[80];			// the widest label of this state: no jumps while loading
+	char hint[400];
 	if (mFetcher)
+	{
 		std::snprintf(label, sizeof(label), "Loading Remote Images: %lu/%lu",
 					  (unsigned long) mFetchDone, (unsigned long) mFetchTotal);
+		std::snprintf(sizing, sizeof(sizing), "Loading Remote Images: %lu/%lu",
+					  (unsigned long) mFetchTotal, (unsigned long) mFetchTotal);
+		std::snprintf(hint, sizeof(hint), "Downloading %lu images: %lu finished, %lu failed so far",
+					  (unsigned long) mFetchTotal, (unsigned long) mFetchDone, (unsigned long) mFetchFailed);
+	}
 	else if (mRemoteRequested || (missing == 0))
-		std::snprintf(label, sizeof(label), "Loaded Remote Images: %d", mDocument->GetLoadedRemoteImages());
+	{
+		std::snprintf(label, sizeof(label), "Loaded Remote Images: %d", loaded);
+		std::strcpy(sizing, label);
+		if (mFetchTotal == 0)
+			std::snprintf(hint, sizeof(hint), "%d remote images shown, from the memory cache", loaded);
+		else
+		{
+			std::snprintf(hint, sizeof(hint), "%d of %lu remote images shown; last load: %lu failed, "
+						  "%lu not images or too large", loaded, (unsigned long) total,
+						  (unsigned long) mFetchFailed, (unsigned long) mFetchRefused);
+			if (mFetchCancelled)
+				std::snprintf(hint + std::strlen(hint), sizeof(hint) - std::strlen(hint),
+							  ", cancelled after %lu of %lu (%s)", (unsigned long) mFetchDone,
+							  (unsigned long) mFetchTotal, mFetchCancelled);
+			std::snprintf(hint + std::strlen(hint), sizeof(hint) - std::strlen(hint),
+						  " (details in the HTTP log)");
+		}
+		if ((missing > 0) && connected)
+			std::snprintf(hint + std::strlen(hint), sizeof(hint) - std::strlen(hint),
+						  ". Click to try the %lu missing ones again", (unsigned long) missing);
+	}
 	else
+	{
 		std::snprintf(label, sizeof(label), "Load Remote Images: %lu", (unsigned long) missing);
+		std::strcpy(sizing, label);
+		std::snprintf(hint, sizeof(hint), "Load the images of this message from the Internet "
+					  "(the sender may learn that it was read)");
+	}
+	if ((missing > 0) && !mFetcher && !connected)
+		std::snprintf(hint + std::strlen(hint), sizeof(hint) - std::strlen(hint),
+					  ". Not available while disconnected");
+
+	button->SetLabel(label);
+	button->SetHint(hint);
+	const JCoordinate width = button->GetFontManager()->GetStringWidth(button->GetFontName(),
+											button->GetFontSize(), button->GetFontStyle(), sizing) +
+							  2 * cRemoteButtonMargin;
+	if (width != button->GetFrameWidth())
+		button->SetSize(width, button->GetFrameHeight());
 
 	// Again for the images that failed (time-outs, ...); never offline
-	enabled = !mFetcher && (missing > 0) && CConnectionManager::sConnectionManager.IsConnected();
-	return label;
+	button->SetActive(JBoolean(!mFetcher && (missing > 0) && connected));
+	button->Show();
 }
 
 // Downloads the remote images of the message shown that are not shown yet
@@ -664,6 +727,9 @@ void CHTMLDisplay::LoadRemoteImages()
 
 	mFetchTotal = missing.size();
 	mFetchDone = 0;
+	mFetchFailed = 0;
+	mFetchRefused = 0;
+	mFetchCancelled = NULL;
 	mRelayoutPending = false;
 	mRedrawPending = false;
 	mLastRelayout = Milliseconds();
@@ -677,47 +743,35 @@ void CHTMLDisplay::LoadRemoteImages()
 	for (std::vector<std::string>::const_iterator iter = missing.begin(); iter != missing.end(); iter++)
 		mFetcher->Add(*iter);
 
-	if (!mRemoteTask)
-		mRemoteTask = new CRemoteImagesTask(this);
-	mRemoteTask->Install();
+	UpdateRemoteTask();
 	RemoteImagesChanged();
 }
 
 // Stops the downloads (images received stay in the cache)
-void CHTMLDisplay::StopRemoteImages()
+void CHTMLDisplay::StopRemoteImages(const char* reason)
 {
-	if (mRemoteTask)
-		mRemoteTask->Remove();
 	if (!mFetcher)
 		return;
 
 	mFetcher->Cancel();
 	mFetcher.reset();
-	mNetworkLog.LogEntry("Remote images: cancelled");
+	mFetchCancelled = reason;
+	mNetworkLog.LogEntry((cdstring("Remote images: cancelled (") + reason + ")").c_str());
 	mNetworkLog.StopLog();
 	mRelayoutPending = false;
 	mRedrawPending = false;
 }
 
-// Called by the idle task while downloading: images that arrived are shown
-// (the layouts grouped), the button follows
-void CHTMLDisplay::PumpRemoteImages()
+// Images received: a new layout (at most one per cRemoteRelayoutPeriod,
+// unless now) or a redraw
+void CHTMLDisplay::ShowReceivedImages(bool now)
 {
-	if (!mFetcher)
-	{
-		mRemoteTask->Remove();
-		return;
-	}
-
-	const size_t done = mFetchDone;
-	const bool running = mFetcher->Pump();
-
-	const unsigned long now = Milliseconds();
-	if (mRelayoutPending && (!running || (now - mLastRelayout >= cRemoteRelayoutPeriod)))
+	const unsigned long time = Milliseconds();
+	if (mRelayoutPending && (now || (time - mLastRelayout >= cRemoteRelayoutPeriod)))
 	{
 		mRelayoutPending = false;
 		mRedrawPending = false;
-		mLastRelayout = now;
+		mLastRelayout = time;
 		mLayoutWidth = -1;
 		Layout();
 	}
@@ -726,16 +780,64 @@ void CHTMLDisplay::PumpRemoteImages()
 		mRedrawPending = false;
 		Refresh();
 	}
+}
+
+// The idle task: pumps the downloads while they run (fast), else watches the
+// connection state while the message has remote images (slowly)
+void CHTMLDisplay::UpdateRemoteTask()
+{
+	const bool watch = mDocument && !mDocument->GetRemoteImageURLs().empty();
+	if (!mFetcher && !watch)
+	{
+		if (mRemoteTask)
+			mRemoteTask->Remove();
+		return;
+	}
+
+	if (!mRemoteTask)
+		mRemoteTask = new CRemoteImagesTask(this);
+	mRemoteTask->SetPeriod(mFetcher ? cRemotePumpPeriod : cRemoteWatchPeriod);
+	mRemoteTask->Install();
+}
+
+// Called by the idle task: images that arrived are shown (the layouts
+// grouped), the button follows; going offline cancels the downloads
+void CHTMLDisplay::PumpRemoteImages()
+{
+	const bool connected = CConnectionManager::sConnectionManager.IsConnected();
+	const bool connection_changed = (connected != mWasConnected);
+	mWasConnected = connected;
+
+	if (!mFetcher)
+	{
+		if (connection_changed)
+			RemoteImagesChanged();
+		return;
+	}
+
+	if (!connected)
+	{
+		// What already arrived stays shown
+		ShowReceivedImages(true);
+		StopRemoteImages("disconnected");
+		UpdateRemoteTask();
+		RemoteImagesChanged();
+		return;
+	}
+
+	const size_t done = mFetchDone;
+	const bool running = mFetcher->Pump();
+	ShowReceivedImages(!running);
 
 	if (!running)
 	{
-		mRemoteTask->Remove();
 		mFetcher.reset();
 		char text[64];
 		std::snprintf(text, sizeof(text), "Remote images: %lu of %lu loaded", (unsigned long) mLoadedURLs.size(),
 					  (unsigned long) (mDocument ? mDocument->GetRemoteImageURLs().size() : 0));
 		mNetworkLog.LogEntry(text);
 		mNetworkLog.StopLog();
+		UpdateRemoteTask();
 	}
 
 	if (!running || (done != mFetchDone))
@@ -748,6 +850,7 @@ void CHTMLDisplay::FetchDone(const std::string& url, bool ok, const std::string&
 	mFetchDone++;
 	if (!ok)
 	{
+		mFetchFailed++;
 		if (mNetworkLog.DoLog())
 			mNetworkLog.AddEntry(("* remote image failed: " + url + ": " + error).c_str());
 		return;
@@ -772,6 +875,7 @@ void CHTMLDisplay::FetchDone(const std::string& url, bool ok, const std::string&
 		mRedrawPending = true;
 		break;
 	default:
+		mFetchRefused++;
 		if (mNetworkLog.DoLog())
 			mNetworkLog.AddEntry(("* remote image not shown (format or size): " + url).c_str());
 		return;

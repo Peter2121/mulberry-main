@@ -40,6 +40,7 @@ class CMessage;
 class CMessageView;
 class CMessageWindow;
 class JXScrollbarSet;
+class JXTextButton;
 struct SFontInfo;
 namespace htmlview { class ImageCache; }
 
@@ -87,13 +88,15 @@ public:
 	// Remote images (LITEHTML-VIEWER-PLAN.md, stage 5): never loaded unless
 	// asked for, per message, with LoadRemoteImages() (the "Load Remote
 	// Images" button); those already downloaded in this session come from
-	// the memory cache, without network access.  The button's label, and
-	// whether it is shown and can be clicked:
+	// the memory cache, without network access.  Not while disconnected:
+	// going offline cancels a load.  The button (shown only if the HTML view
+	// is, and the message has remote images) gets its label, hint (details),
+	// width (fits the label) and state:
 	//   "Load Remote Images: XX"      XX images not loaded yet
-	//   "Loading Remote Images: n/XX" n of XX received
+	//   "Loading Remote Images: n/XX" n of XX finished
 	//   "Loaded Remote Images: YY"    YY images loaded and drawn
-	cdstring	GetRemoteImagesLabel(bool& visible, bool& enabled) const;
-	void		LoadRemoteImages();
+	void	UpdateRemoteImagesButton(JXTextButton* button, bool html_shown) const;
+	void	LoadRemoteImages();
 
 	// The part of a message to show as HTML: the main text part if it is
 	// HTML, or the HTML alternative of the main text; NULL if none
@@ -153,13 +156,19 @@ private:
 	std::set<std::string>				mLoadedURLs;		// remote images given to mDocument
 	size_t								mFetchTotal;		// images being downloaded
 	size_t								mFetchDone;			// of them, finished
+	size_t								mFetchFailed;		// of them, network or HTTP errors
+	size_t								mFetchRefused;		// of them, not images or too large
+	const char*							mFetchCancelled;	// why the last load stopped, or NULL
+	bool								mWasConnected;		// for the button's state
 	bool								mRelayoutPending;	// images arrived: lay out again
 	bool								mRedrawPending;		// images arrived: draw again
 	unsigned long						mLastRelayout;		// time (ms) of the last one
 	mutable CLog						mNetworkLog;		// Mulberry's HTTP log
 
 	bool	ApplyCachedRemoteImages();						// true: lay out again
-	void	StopRemoteImages();
+	void	StopRemoteImages(const char* reason);
+	void	ShowReceivedImages(bool now);					// lay out or draw again
+	void	UpdateRemoteTask();								// pumping, watching, or nothing
 	void	RemoteImagesChanged();							// tells the message view/window
 	static htmlview::ImageCache&	RemoteImageCache();		// for the session, all views
 

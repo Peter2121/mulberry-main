@@ -322,7 +322,6 @@ void CMessageWindow::OnCreate()
 	mRemoteImagesBtn =
 		new JXTextButton("Load Remote Images", mHeader->mPartsHeader,
 					JXWidget::kFixedLeft, JXWidget::kFixedTop, 551,2, 220,22);
-	mRemoteImagesBtn->SetHint("Load the images of this message from the Internet (the sender may learn that it was read)");
 	mRemoteImagesBtn->Hide();
 	ListenTo(mRemoteImagesBtn);
 #endif
@@ -1009,17 +1008,7 @@ void CMessageWindow::RemoteImagesChanged()
 	if (!mRemoteImagesBtn)
 		return;
 
-	bool visible = false;
-	bool enabled = false;
-	cdstring label = mHTML->GetRemoteImagesLabel(visible, enabled);
-	if (visible && mHTMLShown)
-	{
-		mRemoteImagesBtn->SetLabel(label.c_str());
-		mRemoteImagesBtn->SetActive(JBoolean(enabled));
-		mRemoteImagesBtn->Show();
-	}
-	else
-		mRemoteImagesBtn->Hide();
+	mHTML->UpdateRemoteImagesButton(mRemoteImagesBtn, mHTMLShown);
 #endif
 }
 
