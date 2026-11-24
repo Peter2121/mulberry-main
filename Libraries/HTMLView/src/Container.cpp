@@ -9,6 +9,7 @@
 */
 
 #include "Container.h"
+#include "Images.h"
 #include "TextTransform.h"
 
 #include <algorithm>
@@ -134,6 +135,11 @@ Container::Container(const Settings& settings, Host* host)
 Container::~Container()
 {
 	clear_images();
+	for (auto& image : mImages)
+	{
+		if (image.second)
+			cairo_surface_destroy(image.second);
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -229,13 +235,55 @@ void Container::transform_text(std::string& text, litehtml::text_transform tt)
 // Images
 // ---------------------------------------------------------------------------
 
+// The image for a URL, loaded and decoded the first time (the cache keeps
+// the reference)
+cairo_surface_t* Container::LoadImage(const std::string& url)
+{
+	// litehtml passes attribute values as they are
+	size_t first = url.find_first_not_of(" \t\r\n\f");
+	size_t last = url.find_last_not_of(" \t\r\n\f");
+	std::string key = (first == std::string::npos) ? std::string() : url.substr(first, last - first + 1);
+	if (key.empty())
+		return nullptr;
+
+	auto found = mImages.find(key);
+	if (found != mImages.end())
+		return found->second;
+
+	std::string data;
+	bool have_data = false;
+	switch (ClassifyURL(key))
+	{
+	case URLKind::Data:
+		have_data = DecodeDataURL(key, mSettings.max_image_bytes, data);
+		break;
+	case URLKind::Local:
+		have_data = mHost && mHost->LoadImageData(key, data) && (data.size() <= mSettings.max_image_bytes);
+		break;
+	case URLKind::Remote:
+		mBlockedImages++;
+		break;
+	}
+
+	cairo_surface_t* image = have_data ? DecodeImage(data, mSettings.max_image_pixels) : nullptr;
+	mImages.emplace(key, image);
+	return image;
+}
+
 cairo_surface_t* Container::get_image(const std::string& url)
 {
-	return nullptr;
+	// The caller releases its reference
+	cairo_surface_t* image = LoadImage(url);
+	return image ? cairo_surface_reference(image) : nullptr;
 }
 
 void Container::load_image(const char* src, const char* baseurl, bool redraw_on_ready)
 {
+	if (!src)
+		return;
+	std::string url;
+	make_url(src, baseurl, url);
+	LoadImage(url);
 }
 
 // ---------------------------------------------------------------------------

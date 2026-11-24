@@ -43,6 +43,10 @@ struct Settings
 	size_t		max_html_size = 16 * 1024 * 1024;	// bytes
 	int			max_nesting_depth = 512;			// elements (as Chromium's parser)
 	size_t		max_elements = 20000;				// about 12 KB and 30-60 us each
+
+	// Images larger than this are not shown (decompression bombs)
+	size_t		max_image_bytes = 16 * 1024 * 1024;	// encoded size
+	size_t		max_image_pixels = 40 * 1000 * 1000;	// decoded: 160 MB in memory
 };
 
 // A rectangle in pixels
@@ -62,7 +66,18 @@ public:
 
 	virtual void OnAnchorClick(const std::string& url) {}
 	virtual void SetCursor(const std::string& cursor) {}
+
+	// The data of an image the document refers to (encoded: PNG, JPEG, GIF,
+	// WebP), as the host finds it: e.g. a part of the mail for "cid:..." or
+	// for a name.  Called while the document loads.  data: URLs are decoded
+	// by the document itself; remote URLs (http, https, ftp, file) are never
+	// asked for.  Return false if there is no such image.
+	virtual bool LoadImageData(const std::string& url, std::string& data) { return false; }
 };
+
+// Whether the viewer can show an image (a known format, within the
+// settings' size limits): checks the data's header only
+bool IsDisplayableImage(const std::string& data, const Settings& settings);
 
 class Document
 {
@@ -100,6 +115,10 @@ public:
 	// document's top left corner in the Cairo context; clip is in the
 	// context's coordinates too.
 	void Draw(cairo_t* cr, int x, int y, const Rect& clip);
+
+	// Number of distinct remote image URLs (http, https, ...) the document
+	// refers to: they are not loaded
+	int GetBlockedImages() const;
 
 	static const char* ResultText(Result result);
 

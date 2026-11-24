@@ -23,10 +23,13 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <iostream>
 #include <sstream>
 #include <string>
+
+#include <strings.h>
 
 namespace
 {
@@ -47,11 +50,41 @@ const char* const cUsage =
 	"  -t          print timings and memory use\n"
 	"  -h          show this help\n"
 	"\n"
-	"The output defaults to the input's name with .png.  No images or remote\n"
-	"content are loaded.\n"
+	"The output defaults to the input's name with .png.\n"
+	"\n"
+	"Images: data: URLs, and \"cid:NAME\" or relative names as files NAME in\n"
+	"the input's directory (as Mulberry finds them among the mail's parts).\n"
+	"Remote images (http, https, ...) are never loaded.\n"
 	"\n"
 	"Exit status: 0 rendered, 1 error, 2 usage, 3 document rejected by the\n"
 	"viewer's limits (too large, too many elements or nested too deeply).\n";
+
+// Images of the test pages: files next to the input file
+class FileHost : public htmlview::Host
+{
+public:
+	explicit FileHost(const std::string& dir) : mDir(dir) {}
+
+	bool LoadImageData(const std::string& url, std::string& data) override
+	{
+		std::string name = url;
+		if ((name.size() > 4) && (strncasecmp(name.c_str(), "cid:", 4) == 0))
+			name.erase(0, 4);
+		// Only plain names below the input's directory
+		if (name.empty() || (name[0] == '/') || (name.find("..") != std::string::npos))
+			return false;
+		std::ifstream file(mDir + "/" + name, std::ios::binary);
+		if (!file)
+			return false;
+		std::stringstream contents;
+		contents << file.rdbuf();
+		data = contents.str();
+		return true;
+	}
+
+private:
+	std::string mDir;
+};
 
 double Milliseconds(std::chrono::steady_clock::time_point start)
 {
@@ -152,7 +185,9 @@ int main(int argc, char** argv)
 	std::string html = contents.str();
 
 	auto start = std::chrono::steady_clock::now();
-	htmlview::Document document(settings);
+	size_t slash = input.find_last_of('/');
+	FileHost host((slash == std::string::npos) ? std::string(".") : input.substr(0, slash));
+	htmlview::Document document(settings, &host);
 	htmlview::Document::Result status = document.Load(html, charset);
 	double parse_ms = Milliseconds(start);
 	if (status != htmlview::Document::Result::Ok)
@@ -198,6 +233,9 @@ int main(int argc, char** argv)
 		std::snprintf(line, sizeof(line),
 					  "parse %.1f ms, layout %.1f ms, draw %.1f ms; %dx%d px; max RSS %.1f MB",
 					  parse_ms, layout_ms, draw_ms, document.GetWidth(), height, MaxRSSMegabytes());
+		if (document.GetBlockedImages() > 0)
+			std::snprintf(line + std::strlen(line), sizeof(line) - std::strlen(line),
+						  "; %d remote image URLs not loaded", document.GetBlockedImages());
 		std::cout << line << "\n";
 	}
 	return 0;

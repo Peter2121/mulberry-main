@@ -930,7 +930,7 @@ void CMessageWindow::ResetText(void)
 #ifdef HTML_VIEWER
 		bool show_html = false;
 		if ((mParsing == eViewAsHTML) && mCurrentPart && mUTF16Text.get())
-			show_html = mHTML->SetContent(mUTF16Text.get(), header_text.c_str(), *actual_font, mFontScale);
+			show_html = mHTML->SetContent(mUTF16Text.get(), header_text.c_str(), *actual_font, mFontScale, mItsMsg);
 		else
 			mHTML->ClearContent();
 		ShowHTML(show_html);

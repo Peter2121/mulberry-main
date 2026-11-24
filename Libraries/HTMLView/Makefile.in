@@ -31,7 +31,7 @@ CXXFLAGS = -std=gnu++17 -O2 -g -fPIC -Wall -Wextra -Wno-unused-parameter
 UPSTREAM_CXXFLAGS = -std=gnu++17 -O2 -g -fPIC -w
 
 LIBRARY = libHTMLView$A
-SOURCES = Document Container Fonts TextTransform Limits
+SOURCES = Document Container Fonts Images TextTransform Limits
 UPSTREAM = container_cairo cairo_borders conic_gradient
 OBJS = $(SOURCES:%=obj/%$O) $(UPSTREAM:%=obj/upstream/%$O)
 

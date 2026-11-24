@@ -11,6 +11,7 @@
 #include "htmlview/Document.h"
 
 #include "Container.h"
+#include "Images.h"
 #include "Limits.h"
 
 #include <cmath>
@@ -158,6 +159,16 @@ void Document::Draw(cairo_t* cr, int x, int y, const Rect& clip)
 
 	litehtml::position clip_pos(clip.x, clip.y, clip.width, clip.height);
 	mImpl->mDocument->draw((litehtml::uint_ptr) cr, x, y, &clip_pos);
+}
+
+bool IsDisplayableImage(const std::string& data, const Settings& settings)
+{
+	return (data.size() <= settings.max_image_bytes) && ProbeImage(data, settings.max_image_pixels);
+}
+
+int Document::GetBlockedImages() const
+{
+	return mImpl->mContainer.GetBlockedImages();
 }
 
 const char* Document::ResultText(Result result)

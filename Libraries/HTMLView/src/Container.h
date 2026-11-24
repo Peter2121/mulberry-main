@@ -21,6 +21,8 @@
 
 #include "container_cairo.h"
 
+#include <map>
+#include <string>
 #include <vector>
 
 namespace htmlview
@@ -34,6 +36,10 @@ public:
 
 	void SetViewportWidth(int width) { mViewportWidth = width; }
 
+	// Distinct remote image URLs (http, https, ...) the document refers to:
+	// not loaded
+	int  GetBlockedImages() const { return mBlockedImages; }
+
 	// Fonts and text
 	litehtml::uint_ptr	create_font(const litehtml::font_description& descr, const litehtml::document* doc,
 									litehtml::font_metrics* fm) override;
@@ -45,7 +51,8 @@ public:
 	const char*			get_default_font_name() const override;
 	void				transform_text(std::string& text, litehtml::text_transform tt) override;
 
-	// Images: none yet (stage 5 of the plan: cid: and data: images)
+	// Images: data: URLs, and those the host finds (in the mail: cid:, names);
+	// remote ones are never loaded
 	cairo_surface_t*	get_image(const std::string& url) override;
 	void				load_image(const char* src, const char* baseurl, bool redraw_on_ready) override;
 
@@ -73,6 +80,13 @@ private:
 	int						mViewportWidth = 800;
 	std::vector<GlyphRun>	mRuns;			// draw_text's scratch space
 	std::vector<cairo_glyph_t> mGlyphs;
+
+	// Decoded images by URL; nullptr: not available (cached too, so it is
+	// looked for once)
+	std::map<std::string, cairo_surface_t*> mImages;
+	int						mBlockedImages = 0;
+
+	cairo_surface_t*	LoadImage(const std::string& url);
 };
 
 }	// namespace htmlview

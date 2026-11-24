@@ -150,6 +150,9 @@ check_requirements() {
 		need /usr/local/bin/cmake cmake-core
 		need /usr/local/include/png.h png
 		need /usr/local/include/X11/extensions/Xrender.h libXrender
+		# Image decoders (PNG through Cairo)
+		need /usr/local/include/jpeglib.h jpeg-turbo
+		need /usr/local/include/gif_lib.h giflib
 	fi
 	if [ -n "$missing" ]; then
 		die "missing packages, install them with:
@@ -163,6 +166,9 @@ check_requirements() {
 		note "brotli not installed: no HTTP br encoding (pkg install brotli)"
 	[ -e /usr/local/include/zstd.h ] ||
 		note "zstd not installed: no HTTP zstd encoding (pkg install zstd)"
+	if [ -n "$HTML_VIEWER" ] && [ ! -e /usr/local/include/webp/decode.h ]; then
+		note "libwebp not installed: no WebP images in the HTML viewer (pkg install webp)"
+	fi
 
 	# OpenSSL from ports/packages installs headers into /usr/local/include,
 	# where they shadow the base system OpenSSL.  Packaged libraries (e.g.

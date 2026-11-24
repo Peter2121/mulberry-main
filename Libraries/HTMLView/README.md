@@ -13,6 +13,7 @@ host gives it HTML, a width and a Cairo context, and receives callbacks.
 | `src/Fonts.*` | fonts and text: fontconfig, fallback font per character, HarfBuzz shaping, Cairo drawing |
 | `src/TextTransform.*` | CSS `text-transform` with Unicode case mapping (libunistring) |
 | `src/Limits.*` | quick scan of the HTML before parsing: nesting depth and element count |
+| `src/Images.*` | image decoding (PNG, JPEG, GIF, WebP) and `data:` URLs |
 | `tools/html2png.cpp` | test tool: renders an HTML file to PNG |
 | `tests/` | test pages and `run-tests.sh` |
 
@@ -41,8 +42,10 @@ Libraries/HTMLView/html2png [options] input.html [output.png]
   -t          print timings and memory use
 ```
 
-The image is exactly what the viewer draws. No images and no remote content
-are loaded yet (stage 5 of the plan), so `<img>` elements stay empty.
+The image is exactly what the viewer draws. Images: `data:` URLs, and
+`cid:NAME` or relative names as files `NAME` next to the input file (Mulberry
+finds them among the mail's parts instead). Remote images (http, https, ...)
+are never loaded; `-t` reports how many distinct remote URLs were skipped.
 
 To test a mail: save its HTML part to a file (in Mulberry, the part's
 "Extract" in the parts list) and render it. Mulberry will pass the part to
@@ -58,7 +61,23 @@ stress pages into `tests/out` (one PNG and one timing line per page). It
 fails if a page crashes or hangs; the PNG files are for looking at.
 
 The samples imitating mail clients (Outlook, Gmail, Thunderbird, Apple Mail,
-a newsletter) are synthetic: no real mail is included.
+a newsletter) are synthetic. `40-…` and `41-…` are real newsletters,
+anonymised (recipient address, customer number, all links and image URLs
+replaced). `tests/images` holds generated images for `50-images.html`.
+Real mail kept for local testing (`tests/*.eml`) is ignored by git.
+
+## Images
+
+| Source | Shown |
+|---|---|
+| `data:` URL (base64 or percent-encoded) | yes, decoded by the viewer |
+| `cid:` (RFC 2392) | yes: the mail part with that Content-ID (Mulberry) |
+| relative name (`image001.png`) | yes: the mail part with that file name (Mulberry) |
+| `http:`, `https:`, `ftp:`, `file:`, ... | no (remote content; counted) |
+
+Formats: PNG (Cairo), JPEG including CMYK (libjpeg-turbo), GIF first frame
+(giflib), WebP still images (libwebp, if found by configure). `<img>`,
+CSS `background-image` and the `background` attribute.
 
 ## Limits
 
@@ -70,6 +89,8 @@ document is shown by Mulberry as text, as today:
 | `max_html_size` | 16 MB | memory |
 | `max_nesting_depth` | 512 | litehtml is recursive (stack overflow); its parser, Gumbo, takes quadratic time in the depth |
 | `max_elements` | 20,000 | litehtml uses about 12 KB and 30–60 µs per element |
+| `max_image_bytes` | 16 MB | per image, encoded |
+| `max_image_pixels` | 40 million | per image, decoded (decompression bombs) |
 
 ## Known limitations (litehtml)
 

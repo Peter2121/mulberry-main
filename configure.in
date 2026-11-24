@@ -510,6 +510,30 @@ if test "$enable_html_viewer" != "no"; then
     HTMLVIEW_SYS_CFLAGS=`$PKG_CONFIG --cflags $HTMLVIEW_PKGS`
     HTMLVIEW_SYS_LIBS="`$PKG_CONFIG --libs $HTMLVIEW_PKGS` -lunistring -lm -pthread"
 
+    # Image decoders (PNG is Cairo's own): libjpeg (libjpeg-turbo) and
+    # giflib are needed, libwebp is optional
+    AC_MSG_CHECKING([for libjpeg])
+    if $PKG_CONFIG --exists libjpeg; then
+        AC_MSG_RESULT([yes])
+        HTMLVIEW_SYS_CFLAGS="$HTMLVIEW_SYS_CFLAGS `$PKG_CONFIG --cflags libjpeg`"
+        HTMLVIEW_SYS_LIBS="$HTMLVIEW_SYS_LIBS `$PKG_CONFIG --libs libjpeg`"
+    else
+        AC_MSG_RESULT([no])
+        AC_MSG_ERROR([libjpeg (libjpeg-turbo) not found: it is needed by the HTML viewer (or configure with --disable-html-viewer)])
+    fi
+    AC_CHECK_HEADER([gif_lib.h], [],
+        AC_MSG_ERROR([gif_lib.h (giflib) not found: it is needed by the HTML viewer (or configure with --disable-html-viewer)]))
+    AC_CHECK_LIB(gif, DGifOpen, [HTMLVIEW_SYS_LIBS="$HTMLVIEW_SYS_LIBS -lgif"],
+        AC_MSG_ERROR([libgif (giflib) not found: it is needed by the HTML viewer (or configure with --disable-html-viewer)]))
+    AC_MSG_CHECKING([for libwebp (optional: WebP images in the HTML viewer)])
+    if $PKG_CONFIG --exists libwebp; then
+        AC_MSG_RESULT([yes])
+        HTMLVIEW_SYS_CFLAGS="$HTMLVIEW_SYS_CFLAGS -DHTMLVIEW_WEBP `$PKG_CONFIG --cflags libwebp`"
+        HTMLVIEW_SYS_LIBS="$HTMLVIEW_SYS_LIBS `$PKG_CONFIG --libs libwebp`"
+    else
+        AC_MSG_RESULT([no])
+    fi
+
     # Test tool html2png: the GCC run-time directory as rpath (see above)
     HTMLVIEW_TOOL_LIBS=""
     if test -n "$GCC_RUNTIME_DIR"; then
