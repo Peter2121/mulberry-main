@@ -855,8 +855,8 @@ a classic table one):**
   (PNG, JPEG, CMYK JPEG, GIF, WebP with alpha; `cid:`, names, `data:`,
   backgrounds, remote, missing, broken).
 
-**Stage 5, second part: remote images, design (decided 2026-11-24, not
-implemented yet).**
+**Stage 5, second part: remote images, design (decided 2026-11-24; R1–R4
+done).**
 
 *Behaviour*
 - **Minimal GUI change** (the interface will be rewritten with another
@@ -960,6 +960,49 @@ image larger than the cache is not stored), `SetMaxBytes()`, `Clear()`;
 128 MB by default, with `TODO(remote-image-cache-size)` at the constant.
 Owned by the host: Mulberry keeps one for the session (all message views).
 Unit test `tests/imagecache-test.cpp` (13 checks) in `gmake check`.
+
+**R4 done (2026-11-24), to be tested in Mulberry.** `CHTMLDisplay` is the
+`htmlview::FetchHost`:
+- **The button:** a `JXTextButton` right of the Quotes popup, in the 3-pane
+  preview (`CMessageView`, in `mPartsMove` at x 548) and in the message
+  window (`CMessageWindow`, in `mHeader->mPartsHeader` at x 551), 220 pixels
+  wide. It is shown only in the "as HTML" view, and only when the document
+  has remote image URLs. `CHTMLDisplay::GetRemoteImagesLabel()` gives the
+  text, the visibility and the state, and the views' `RemoteImagesChanged()`
+  applies them. It is called on each change: new content, cleared content,
+  each image received, end of loading, `ShowHTML()`.
+  - "Load Remote Images: XX": XX = URLs not shown yet.
+  - "Loading Remote Images: n/XX": n = images finished, successes and
+    failures.
+  - "Loaded Remote Images: YY": YY = `Document::GetLoadedRemoteImages()`.
+  - It can be clicked when nothing is loading, some images are missing and
+    Mulberry is connected. After a load, a click tries the missing ones
+    again.
+- **Loading:** one `htmlview::Fetcher` per view, for the URLs not loaded yet.
+  - An idle task (`JXIdleTask`, 20 ms) pumps it while it runs, then removes
+    itself.
+  - An image that needs a new layout is grouped with the others: at most one
+    layout every 250 ms, and one at the end. An image that only needs a
+    redraw is drawn at once.
+- **Cache:** the session's `htmlview::ImageCache` (function-static,
+  128 MB) receives each image the viewer could decode.
+  - `SetContent()` applies the cached images before the first layout, then
+    those found by the layout (backgrounds), relaying out if needed.
+  - A message shown again therefore shows its images at once, without
+    network access.
+- **Cancelling:** showing another message, or another view of it (plain,
+  source...), cancels the downloads. Images already received stay in the
+  cache.
+  - The same message shown again, e.g. after a font size change, keeps
+    loading into the new document.
+  - The view only compares the message pointer, it never uses it.
+- **HTTP log:** when Mulberry's HTTP log is active, it gets one log session
+  per load (`CLog::eLogHTTP`). The session holds libcurl's messages, the
+  request and response headers, the failures and the images not shown,
+  then "Remote images: N of M loaded" or "cancelled".
+- Left for R5: the button's state does not follow a change of connection
+  (it is checked again on click). In a narrow 3-pane preview the button may
+  be cut at the right edge.
 
 **Milestone after stage 5:** usable for daily reading.
 

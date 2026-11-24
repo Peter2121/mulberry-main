@@ -16,6 +16,7 @@
 
 #include "CAttachment.h"
 #include "CAttachmentList.h"
+#include "CConnectionManager.h"
 #include "CFilter.h"
 #include "CFocusBorder.h"
 #include "CLog.h"
@@ -30,21 +31,25 @@
 #include "cdustring.h"
 
 #include "htmlview/Document.h"
+#include "htmlview/ImageCache.h"
 
 #include <cairo.h>
 #include <cairo-xlib.h>
 
 #include <JXColormap.h>
 #include <JXDisplay.h>
+#include <JXIdleTask.h>
 #include <JXScrollbar.h>
 #include <JXWindow.h>
 #include <JXWindowPainter.h>
 #include <jASCIIConstants.h>
+#include <jXGlobals.h>
 #include <jXKeysym.h>
 
 #include <X11/Xlib.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -308,7 +313,55 @@ CAttachment* FindHTML(CAttachment* part)
 	return NULL;
 }
 
+// Remote images: how often the downloads are pumped while running, and the
+// shortest time between two layouts for images that arrived (ms)
+const unsigned long cRemotePumpPeriod = 20;
+const unsigned long cRemoteRelayoutPeriod = 250;
+
+unsigned long Milliseconds()
+{
+	return (unsigned long) std::chrono::duration_cast<std::chrono::milliseconds>(
+			std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
 }	// namespace
+
+// Pumps the remote image downloads of a view while they run
+class CHTMLDisplay::CRemoteImagesTask : public JXIdleTask
+{
+public:
+	explicit CRemoteImagesTask(CHTMLDisplay* display)
+		: JXIdleTask(cRemotePumpPeriod), mDisplay(display), mInstalled(false) {}
+	virtual ~CRemoteImagesTask()
+		{ Remove(); }
+
+	void Install()
+	{
+		if (!mInstalled)
+		{
+			JXGetApplication()->InstallPermanentTask(this);
+			mInstalled = true;
+		}
+	}
+	void Remove()
+	{
+		if (mInstalled)
+		{
+			JXGetApplication()->RemovePermanentTask(this);
+			mInstalled = false;
+		}
+	}
+
+	virtual void Perform(const Time delta, Time* maxSleepTime)
+	{
+		if (TimeToPerform(delta, maxSleepTime))
+			mDisplay->PumpRemoteImages();
+	}
+
+private:
+	CHTMLDisplay*	mDisplay;
+	bool			mInstalled;
+};
 
 CHTMLDisplay::CHTMLDisplay(JXContainer* enclosure,
 						   const HSizingOption hSizing, const VSizingOption vSizing,
@@ -322,7 +375,15 @@ CHTMLDisplay::CHTMLDisplay(JXContainer* enclosure,
 	  mMsgView(NULL),
 	  mMsgWindow(NULL),
 	  mLayoutWidth(-1),
-	  mImageMessage(NULL)
+	  mImageMessage(NULL),
+	  mRemoteTask(NULL),
+	  mRemoteMessage(NULL),
+	  mRemoteRequested(false),
+	  mFetchTotal(0),
+	  mFetchDone(0),
+	  mRelayoutPending(false),
+	  mRedrawPending(false),
+	  mLastRelayout(0)
 {
 	sCreatedScroller = NULL;
 
@@ -342,6 +403,8 @@ CHTMLDisplay::CHTMLDisplay(JXContainer* enclosure,
 
 CHTMLDisplay::~CHTMLDisplay()
 {
+	StopRemoteImages();
+	delete mRemoteTask;
 }
 
 double CHTMLDisplay::FontSizeInPixels(Display* display, double points)
@@ -388,6 +451,16 @@ bool CHTMLDisplay::SetContent(const unichar_t* html, const char* header, const S
 		text.append(utf8.c_str(), utf8.length());
 	}
 
+	// Remote images: downloads for another message stop; for the same message
+	// (shown again, e.g. with another font size) they go on, into the new
+	// document
+	if (!msg || (msg != mRemoteMessage))
+	{
+		StopRemoteImages();
+		mRemoteRequested = false;
+	}
+	mRemoteMessage = msg;
+
 	// The documents ask for their images while they load and lay out: the
 	// message is only used then (LoadImageData())
 	mImageMessage = msg;
@@ -415,8 +488,18 @@ bool CHTMLDisplay::SetContent(const unichar_t* html, const char* header, const S
 	{
 		mDocument = std::move(document);
 		mAttachments = std::move(attachments);
+		mLoadedURLs.clear();
+
+		// Remote images already downloaded in this session, before the
+		// layout; images found by the layout (backgrounds) after it
+		ApplyCachedRemoteImages();
 		mLayoutWidth = -1;
 		Layout();
+		if (ApplyCachedRemoteImages())
+		{
+			mLayoutWidth = -1;
+			Layout();
+		}
 	}
 
 	mImageMessage = NULL;
@@ -431,6 +514,7 @@ bool CHTMLDisplay::SetContent(const unichar_t* html, const char* header, const S
 	}
 	ScrollTo(0, 0);
 	Refresh();
+	RemoteImagesChanged();
 	return true;
 }
 
@@ -479,11 +563,240 @@ std::string CHTMLDisplay::AttachedImagesHTML(CMessage* msg, const htmlview::Sett
 
 void CHTMLDisplay::ClearContent()
 {
+	StopRemoteImages();
+	mRemoteMessage = NULL;
+	mRemoteRequested = false;
+	mLoadedURLs.clear();
+
 	mDocument.reset();
 	mAttachments.reset();
 	mLayoutWidth = -1;
 	Layout();
 	Refresh();
+	RemoteImagesChanged();
+}
+
+#pragma mark ____________________________Remote images
+
+// The session's remote images, shared by all views
+htmlview::ImageCache& CHTMLDisplay::RemoteImageCache()
+{
+	// TODO(remote-image-cache-size): the size (128 MB) will be a preference
+	// (htmlview/ImageCache.h)
+	static htmlview::ImageCache sCache;
+	return sCache;
+}
+
+// Gives mDocument the remote images it needs that are in the cache
+bool CHTMLDisplay::ApplyCachedRemoteImages()
+{
+	if (!mDocument)
+		return false;
+
+	htmlview::ImageCache& cache = RemoteImageCache();
+	const std::vector<std::string> urls = mDocument->GetRemoteImageURLs();
+	bool relayout = false;
+	std::string data;
+	for (std::vector<std::string>::const_iterator iter = urls.begin(); iter != urls.end(); iter++)
+	{
+		if (mLoadedURLs.count(*iter) || !cache.Get(*iter, data))
+			continue;
+		htmlview::Document::ImageChange change = mDocument->SetRemoteImage(*iter, data);
+		if (change != htmlview::Document::ImageChange::NoChange)
+			mLoadedURLs.insert(*iter);
+		if (change == htmlview::Document::ImageChange::Relayout)
+			relayout = true;
+	}
+	return relayout;
+}
+
+cdstring CHTMLDisplay::GetRemoteImagesLabel(bool& visible, bool& enabled) const
+{
+	visible = false;
+	enabled = false;
+	if (!mDocument)
+		return cdstring::null_str;
+	const size_t total = mDocument->GetRemoteImageURLs().size();
+	if (total == 0)
+		return cdstring::null_str;
+
+	visible = true;
+	const size_t missing = (total > mLoadedURLs.size()) ? total - mLoadedURLs.size() : 0;
+	char label[80];
+	if (mFetcher)
+		std::snprintf(label, sizeof(label), "Loading Remote Images: %lu/%lu",
+					  (unsigned long) mFetchDone, (unsigned long) mFetchTotal);
+	else if (mRemoteRequested || (missing == 0))
+		std::snprintf(label, sizeof(label), "Loaded Remote Images: %d", mDocument->GetLoadedRemoteImages());
+	else
+		std::snprintf(label, sizeof(label), "Load Remote Images: %lu", (unsigned long) missing);
+
+	// Again for the images that failed (time-outs, ...); never offline
+	enabled = !mFetcher && (missing > 0) && CConnectionManager::sConnectionManager.IsConnected();
+	return label;
+}
+
+// Downloads the remote images of the message shown that are not shown yet
+void CHTMLDisplay::LoadRemoteImages()
+{
+	if (!mDocument || mFetcher || !CConnectionManager::sConnectionManager.IsConnected())
+		return;
+
+	// Another view may have downloaded some meanwhile
+	if (ApplyCachedRemoteImages())
+		mLayoutWidth = -1;
+	Layout();
+	Refresh();
+
+	mRemoteRequested = true;
+	std::vector<std::string> missing;
+	const std::vector<std::string> urls = mDocument->GetRemoteImageURLs();
+	for (std::vector<std::string>::const_iterator iter = urls.begin(); iter != urls.end(); iter++)
+	{
+		if (!mLoadedURLs.count(*iter))
+			missing.push_back(*iter);
+	}
+	if (missing.empty())
+	{
+		RemoteImagesChanged();
+		return;
+	}
+
+	mFetchTotal = missing.size();
+	mFetchDone = 0;
+	mRelayoutPending = false;
+	mRedrawPending = false;
+	mLastRelayout = Milliseconds();
+
+	char description[64];
+	std::snprintf(description, sizeof(description), "Remote images of a message: %lu", (unsigned long) mFetchTotal);
+	mNetworkLog.StartLog(CLog::eLogHTTP, description);
+
+	// Add() reports refused URLs at once (FetchDone())
+	mFetcher.reset(new htmlview::Fetcher(this));
+	for (std::vector<std::string>::const_iterator iter = missing.begin(); iter != missing.end(); iter++)
+		mFetcher->Add(*iter);
+
+	if (!mRemoteTask)
+		mRemoteTask = new CRemoteImagesTask(this);
+	mRemoteTask->Install();
+	RemoteImagesChanged();
+}
+
+// Stops the downloads (images received stay in the cache)
+void CHTMLDisplay::StopRemoteImages()
+{
+	if (mRemoteTask)
+		mRemoteTask->Remove();
+	if (!mFetcher)
+		return;
+
+	mFetcher->Cancel();
+	mFetcher.reset();
+	mNetworkLog.LogEntry("Remote images: cancelled");
+	mNetworkLog.StopLog();
+	mRelayoutPending = false;
+	mRedrawPending = false;
+}
+
+// Called by the idle task while downloading: images that arrived are shown
+// (the layouts grouped), the button follows
+void CHTMLDisplay::PumpRemoteImages()
+{
+	if (!mFetcher)
+	{
+		mRemoteTask->Remove();
+		return;
+	}
+
+	const size_t done = mFetchDone;
+	const bool running = mFetcher->Pump();
+
+	const unsigned long now = Milliseconds();
+	if (mRelayoutPending && (!running || (now - mLastRelayout >= cRemoteRelayoutPeriod)))
+	{
+		mRelayoutPending = false;
+		mRedrawPending = false;
+		mLastRelayout = now;
+		mLayoutWidth = -1;
+		Layout();
+	}
+	else if (mRedrawPending)
+	{
+		mRedrawPending = false;
+		Refresh();
+	}
+
+	if (!running)
+	{
+		mRemoteTask->Remove();
+		mFetcher.reset();
+		char text[64];
+		std::snprintf(text, sizeof(text), "Remote images: %lu of %lu loaded", (unsigned long) mLoadedURLs.size(),
+					  (unsigned long) (mDocument ? mDocument->GetRemoteImageURLs().size() : 0));
+		mNetworkLog.LogEntry(text);
+		mNetworkLog.StopLog();
+	}
+
+	if (!running || (done != mFetchDone))
+		RemoteImagesChanged();
+}
+
+// htmlview::FetchHost: an image arrived (or failed)
+void CHTMLDisplay::FetchDone(const std::string& url, bool ok, const std::string& data, const std::string& error)
+{
+	mFetchDone++;
+	if (!ok)
+	{
+		if (mNetworkLog.DoLog())
+			mNetworkLog.AddEntry(("* remote image failed: " + url + ": " + error).c_str());
+		return;
+	}
+
+	// Already given (from the cache, to a new document of the same message)
+	if (mLoadedURLs.count(url))
+	{
+		RemoteImageCache().Put(url, data);
+		return;
+	}
+
+	// Only images the viewer can show are kept
+	htmlview::Document::ImageChange change =
+		mDocument ? mDocument->SetRemoteImage(url, data) : htmlview::Document::ImageChange::NoChange;
+	switch (change)
+	{
+	case htmlview::Document::ImageChange::Relayout:
+		mRelayoutPending = true;
+		break;
+	case htmlview::Document::ImageChange::Redraw:
+		mRedrawPending = true;
+		break;
+	default:
+		if (mNetworkLog.DoLog())
+			mNetworkLog.AddEntry(("* remote image not shown (format or size): " + url).c_str());
+		return;
+	}
+	mLoadedURLs.insert(url);
+	RemoteImageCache().Put(url, data);
+}
+
+bool CHTMLDisplay::LogEnabled() const
+{
+	return mNetworkLog.DoLog();
+}
+
+void CHTMLDisplay::Log(const std::string& text)
+{
+	mNetworkLog.AddEntry(text.c_str());
+}
+
+// Tells the message view or window (its "Load Remote Images" button)
+void CHTMLDisplay::RemoteImagesChanged()
+{
+	if (mMsgView)
+		mMsgView->RemoteImagesChanged();
+	if (mMsgWindow)
+		mMsgWindow->RemoteImagesChanged();
 }
 
 // Lays the document out for the visible width, if it changed

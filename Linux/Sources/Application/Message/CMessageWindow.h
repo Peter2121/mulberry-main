@@ -92,6 +92,7 @@ class CSplitter;
 class JXDecorRect;
 class JXFlatRect;
 class JXScrollbarSet;
+class JXTextButton;
 class JXUpRect;
 
 class CMessageWindow : public CFileDocument
@@ -124,6 +125,8 @@ public:
 	virtual void Activate();
 
 	void	DoSaveAs();
+
+	void	RemoteImagesChanged();						// Update the "Load Remote Images" button
 
 protected:
 	virtual void Receive (JBroadcaster* sender, const Message& message);
@@ -315,6 +318,7 @@ private:
 	CFormattedTextDisplay*	mText;
 	CHTMLDisplay*			mHTML;						// HTML view ("Format: as HTML"); NULL without the HTML viewer
 	bool					mHTMLShown;					// HTML view shown instead of mText
+	JXTextButton*			mRemoteImagesBtn;			// "Load Remote Images" (HTML view only); NULL without the HTML viewer
 
 	bool					mRedisplayBlock;			// Prevent window from being redisplayed
 	bool					mAllowDeleted;				// Allow window close on message delete

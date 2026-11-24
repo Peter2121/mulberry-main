@@ -22,8 +22,10 @@
 #ifdef HTML_VIEWER
 
 #include "CCommander.h"
+#include "CLog.h"
 
 #include "htmlview/Document.h"
+#include "htmlview/Fetcher.h"
 
 #include <JXScrollableWidget.h>
 
@@ -39,10 +41,12 @@ class CMessageView;
 class CMessageWindow;
 class JXScrollbarSet;
 struct SFontInfo;
+namespace htmlview { class ImageCache; }
 
 class CHTMLDisplay : public CCommander,		// Commander must be first so it gets destroyed last
 					 public JXScrollableWidget,
-					 public htmlview::Host
+					 public htmlview::Host,
+					 public htmlview::FetchHost
 {
 public:
 	CHTMLDisplay(JXContainer* enclosure,
@@ -64,7 +68,8 @@ public:
 	// Shows HTML: the text of a message part (UTF-16, as decoded by
 	// Mulberry), after an optional header text (UTF-8, shown as plain text
 	// above it).  Images it refers to are looked for among the parts of msg
-	// ("cid:" Content-ID, or file name); remote ones are not loaded.  Image
+	// ("cid:" Content-ID, or file name); remote ones are only taken from the
+	// memory cache, unless LoadRemoteImages() was called for msg.  Image
 	// parts it does not refer to are shown below it (as Thunderbird does).
 	// Returns false when the viewer rejects the document (too large, too
 	// many elements, nested too deeply): show it as text.
@@ -79,6 +84,17 @@ public:
 	void	GetScrollPos(long& h, long& v) const;
 	void	SetScrollPos(long h, long v);
 
+	// Remote images (LITEHTML-VIEWER-PLAN.md, stage 5): never loaded unless
+	// asked for, per message, with LoadRemoteImages() (the "Load Remote
+	// Images" button); those already downloaded in this session come from
+	// the memory cache, without network access.  The button's label, and
+	// whether it is shown and can be clicked:
+	//   "Load Remote Images: XX"      XX images not loaded yet
+	//   "Loading Remote Images: n/XX" n of XX received
+	//   "Loaded Remote Images: YY"    YY images loaded and drawn
+	cdstring	GetRemoteImagesLabel(bool& visible, bool& enabled) const;
+	void		LoadRemoteImages();
+
 	// The part of a message to show as HTML: the main text part if it is
 	// HTML, or the HTML alternative of the main text; NULL if none
 	static CAttachment* FindHTMLPart(CMessage* msg);
@@ -88,6 +104,15 @@ public:
 
 	// htmlview::Host: images in the mail
 	virtual bool	LoadImageData(const std::string& url, std::string& data);
+
+	// htmlview::FetchHost: remote images downloaded, network log
+	virtual void	FetchDone(const std::string& url, bool ok, const std::string& data,
+							  const std::string& error);
+	virtual bool	LogEnabled() const;
+	virtual void	Log(const std::string& text);
+
+	// Downloads in progress (called by an idle task)
+	void	PumpRemoteImages();
 
 protected:
 	virtual void	Draw(JXWindowPainter& p, const JRect& rect);
@@ -118,6 +143,25 @@ private:
 
 	bool	ReadPartData(CAttachment* part, std::string& data);
 	std::string	AttachedImagesHTML(CMessage* msg, const htmlview::Settings& settings);
+
+	// Remote images of mDocument
+	class CRemoteImagesTask;
+	std::unique_ptr<htmlview::Fetcher>	mFetcher;			// while downloading
+	CRemoteImagesTask*					mRemoteTask;		// pumps mFetcher
+	CMessage*							mRemoteMessage;		// the message shown (only compared)
+	bool								mRemoteRequested;	// its images were asked for
+	std::set<std::string>				mLoadedURLs;		// remote images given to mDocument
+	size_t								mFetchTotal;		// images being downloaded
+	size_t								mFetchDone;			// of them, finished
+	bool								mRelayoutPending;	// images arrived: lay out again
+	bool								mRedrawPending;		// images arrived: draw again
+	unsigned long						mLastRelayout;		// time (ms) of the last one
+	mutable CLog						mNetworkLog;		// Mulberry's HTTP log
+
+	bool	ApplyCachedRemoteImages();						// true: lay out again
+	void	StopRemoteImages();
+	void	RemoteImagesChanged();							// tells the message view/window
+	static htmlview::ImageCache&	RemoteImageCache();		// for the session, all views
 
 	void	Layout();
 	static double	FontSizeInPixels(Display* display, double points);

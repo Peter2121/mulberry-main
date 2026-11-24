@@ -68,6 +68,7 @@
 #include <JXApplication.h>
 #include <JXColormap.h>
 #include <JXDisplay.h>
+#include <JXTextButton.h>
 #include <JXFlatRect.h>
 #include <JXImageButton.h>
 #include <JXImageCheckbox.h>
@@ -150,6 +151,7 @@ CMessageWindow::CMessageWindow(JXDirector* supervisor)
 	mQuoteDepth = -1;
 	mHTML = NULL;
 	mHTMLShown = false;
+	mRemoteImagesBtn = NULL;
 
 	mHeaderState.mExpanded = true;
 	mHeaderState.mFromVisible = true;
@@ -314,6 +316,15 @@ void CMessageWindow::OnCreate()
 							 0, cSecurePaneHeight, cWindowWidth, cSplitterHeight - cSecurePaneHeight);
 	mHTML->SetMessageWindow(this);
 	mHTML->GetScroller()->Hide();
+
+	// Remote images of the HTML view: right of the quote depth popup, shown
+	// only for messages that have some
+	mRemoteImagesBtn =
+		new JXTextButton("Load Remote Images", mHeader->mPartsHeader,
+					JXWidget::kFixedLeft, JXWidget::kFixedTop, 551,2, 220,22);
+	mRemoteImagesBtn->SetHint("Load the images of this message from the Internet (the sender may learn that it was read)");
+	mRemoteImagesBtn->Hide();
+	ListenTo(mRemoteImagesBtn);
 #endif
 
 	// Hide the verify/decrypt details
@@ -987,6 +998,28 @@ void CMessageWindow::ShowHTML(bool show)
 	// The hidden one cannot keep the focus
 	if (had_focus)
 		FocusText();
+	RemoteImagesChanged();
+#endif
+}
+
+// The remote images button follows the HTML view
+void CMessageWindow::RemoteImagesChanged()
+{
+#ifdef HTML_VIEWER
+	if (!mRemoteImagesBtn)
+		return;
+
+	bool visible = false;
+	bool enabled = false;
+	cdstring label = mHTML->GetRemoteImagesLabel(visible, enabled);
+	if (visible && mHTMLShown)
+	{
+		mRemoteImagesBtn->SetLabel(label.c_str());
+		mRemoteImagesBtn->SetActive(JBoolean(enabled));
+		mRemoteImagesBtn->Show();
+	}
+	else
+		mRemoteImagesBtn->Hide();
 #endif
 }
 
@@ -1971,6 +2004,13 @@ void CMessageWindow::Receive(JBroadcaster* sender, const Message& message)
 			OnDecreaseFont();
 			return;
 		}		
+#ifdef HTML_VIEWER
+		else if (sender == mRemoteImagesBtn)
+		{
+			mHTML->LoadRemoteImages();
+			return;
+		}
+#endif
 	}
 	else if(message.Is(JXMenu::kItemSelected))
 	{

@@ -63,6 +63,7 @@ class JXMultiImageButton;
 class JXMultiImageCheckbox;
 class JXScrollbarSet;
 class JXStaticText;
+class JXTextButton;
 class JXUpRect;
 
 class CMessageView : public CBaseView,
@@ -173,6 +174,7 @@ private:
 	CFormattedTextDisplay*	mText;
 	CHTMLDisplay*			mHTML;						// HTML view ("Format: as HTML"); NULL without the HTML viewer
 	bool					mHTMLShown;					// HTML view shown instead of mText
+	JXTextButton*			mRemoteImagesBtn;			// "Load Remote Images" (HTML view only); NULL without the HTML viewer
 
 	bool			mRedisplayBlock;					// Prevent redisplay
 	bool			mResetTextBlock;					// Prevent ResetText execution
@@ -234,6 +236,7 @@ public:
 			void	SetParsing(EView view);					// Change the view mode and its popup
 			void	ShowHTML(bool show);					// Show the HTML view instead of the text, or the text
 			void	FocusText();							// Focus the message text (text or HTML view)
+			void	RemoteImagesChanged();					// Update the "Load Remote Images" button
 			void	ResetFontScale();						// Reset font scale text
 			void	ResetCaption();							// Reset message caption
 			void	ResetOptions();							// Mail view options changed
