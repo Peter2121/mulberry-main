@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Remote images</title>
+<!-- Remote images: never loaded by the viewer; the host downloads them and
+     gives them to the document afterwards. html2png -R DIR gives each the
+     file of DIR named as the URL's last path segment (run-tests.sh uses
+     tests/images); without -R they stay empty. -->
+<style>
+  body { font-family: sans-serif; margin: 16px; }
+  td { padding: 6px; vertical-align: top; font-size: 13px; border-bottom: 1px solid #ddd; }
+  .bg { background: #eee url("https://cdn.example.invalid/img/badge.gif") repeat-x; height: 100px; }
+</style>
+</head>
+<body>
+<h2>Remote images</h2>
+<table cellspacing="0" width="100%">
+<tr><td width="40%">No size given: a new layout when it arrives</td>
+    <td><img src="https://images.example.invalid/news/logo.png?utm_source=mail&amp;id=123" alt="logo">
+        <p>Text below the image: moves down once it is there.</p></td></tr>
+<tr><td>width/height given: only a redraw</td>
+    <td><img src="https://images.example.invalid/news/photo.jpg" width="160" height="100" alt="photo"></td></tr>
+<tr><td>Remote CSS background</td><td class="bg">text over the background</td></tr>
+<tr><td>The same URL again (counted once)</td>
+    <td><img src="https://images.example.invalid/news/logo.png?utm_source=mail&amp;id=123" width="80" height="50" alt="logo again"></td></tr>
+<tr><td>Plain http</td><td><img src="http://plain.example.invalid/alpha.webp" alt="webp"></td></tr>
+<tr><td>No such file: stays empty</td><td><img src="https://images.example.invalid/news/missing.png" width="120" height="40" alt="missing" style="border: 1px dashed #999"></td></tr>
+</table>
+<p>End of page.</p>
+</body>
+</html>

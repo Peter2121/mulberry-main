@@ -237,18 +237,33 @@ void Container::transform_text(std::string& text, litehtml::text_transform tt)
 
 // The image for a URL, loaded and decoded the first time (the cache keeps
 // the reference)
-cairo_surface_t* Container::LoadImage(const std::string& url)
+namespace
 {
-	// litehtml passes attribute values as they are
+
+// litehtml passes attribute values as they are
+std::string TrimURL(const std::string& url)
+{
 	size_t first = url.find_first_not_of(" \t\r\n\f");
 	size_t last = url.find_last_not_of(" \t\r\n\f");
-	std::string key = (first == std::string::npos) ? std::string() : url.substr(first, last - first + 1);
+	return (first == std::string::npos) ? std::string() : url.substr(first, last - first + 1);
+}
+
+}	// namespace
+
+cairo_surface_t* Container::LoadImage(const std::string& url, ImageUse use)
+{
+	std::string key = TrimURL(url);
 	if (key.empty())
 		return nullptr;
 
 	auto found = mImages.find(key);
 	if (found != mImages.end())
+	{
+		auto remote = mRemoteAffectsLayout.find(key);
+		if ((remote != mRemoteAffectsLayout.end()) && (use == ImageUse::Layout))
+			remote->second = true;
 		return found->second;
+	}
 
 	std::string data;
 	bool have_data = false;
@@ -261,7 +276,10 @@ cairo_surface_t* Container::LoadImage(const std::string& url)
 		have_data = mHost && mHost->LoadImageData(key, data) && (data.size() <= mSettings.max_image_bytes);
 		break;
 	case URLKind::Remote:
-		mBlockedImages++;
+		// Pending: the host may give it later (SetRemoteImage())
+		mRemoteURLs.push_back(key);
+		// Not known (first needed while drawing): assume the layout depends on it
+		mRemoteAffectsLayout[key] = (use != ImageUse::Redraw);
 		break;
 	}
 
@@ -273,7 +291,7 @@ cairo_surface_t* Container::LoadImage(const std::string& url)
 cairo_surface_t* Container::get_image(const std::string& url)
 {
 	// The caller releases its reference
-	cairo_surface_t* image = LoadImage(url);
+	cairo_surface_t* image = LoadImage(url, ImageUse::Lookup);
 	return image ? cairo_surface_reference(image) : nullptr;
 }
 
@@ -283,7 +301,29 @@ void Container::load_image(const char* src, const char* baseurl, bool redraw_on_
 		return;
 	std::string url;
 	make_url(src, baseurl, url);
-	LoadImage(url);
+	LoadImage(url, redraw_on_ready ? ImageUse::Redraw : ImageUse::Layout);
+}
+
+int Container::SetRemoteImage(const std::string& url, const std::string& data)
+{
+	using Change = Document::ImageChange;
+
+	std::string key = TrimURL(url);
+	auto remote = mRemoteAffectsLayout.find(key);
+	if ((remote == mRemoteAffectsLayout.end()) || (data.size() > mSettings.max_image_bytes))
+		return (int) Change::NoChange;
+
+	cairo_surface_t* image = DecodeImage(data, mSettings.max_image_pixels);
+	if (!image)
+		return (int) Change::NoChange;
+
+	cairo_surface_t*& cached = mImages[key];
+	if (cached)
+		cairo_surface_destroy(cached);
+	else
+		mLoadedRemote++;
+	cached = image;
+	return (int) (remote->second ? Change::Relayout : Change::Redraw);
 }
 
 // ---------------------------------------------------------------------------

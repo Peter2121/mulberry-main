@@ -85,7 +85,8 @@ for page in "$TESTDIR"/*.html "$GEN"/*.html; do
 	name=$(basename "$page" .html)
 	total=$((total + 1))
 
-	(ulimit -t $TIME_LIMIT; exec "$TOOL" -t -w 800 "$page" "$OUTDIR/$name.png") \
+	# Remote images "downloaded" from tests/images (no network)
+	(ulimit -t $TIME_LIMIT; exec "$TOOL" -t -w 800 -R "$TESTDIR/images" "$page" "$OUTDIR/$name.png") \
 		> "$OUTDIR/$name.txt" 2>&1
 	rc=$?
 	case $rc in

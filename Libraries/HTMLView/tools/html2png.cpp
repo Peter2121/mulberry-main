@@ -47,6 +47,9 @@ const char* const cUsage =
 	"  -m HEIGHT   maximum height of the image (default 32000); longer\n"
 	"              documents are cut\n"
 	"  -e COUNT    maximum number of elements (default: the viewer's, 20000)\n"
+	"  -R DIR      remote images from files: after the first layout, each\n"
+	"              remote image URL is given the file of DIR named as the\n"
+	"              URL's last path segment, as if downloaded (no network)\n"
 	"  -t          print timings and memory use\n"
 	"  -h          show this help\n"
 	"\n"
@@ -54,7 +57,7 @@ const char* const cUsage =
 	"\n"
 	"Images: data: URLs, and \"cid:NAME\" or relative names as files NAME in\n"
 	"the input's directory (as Mulberry finds them among the mail's parts).\n"
-	"Remote images (http, https, ...) are never loaded.\n"
+	"Remote images (http, https, ...) are never loaded from the network.\n"
 	"\n"
 	"Exit status: 0 rendered, 1 error, 2 usage, 3 document rejected by the\n"
 	"viewer's limits (too large, too many elements or nested too deeply).\n";
@@ -118,11 +121,17 @@ int main(int argc, char** argv)
 	int width = 800;
 	int max_height = 32000;		// Cairo image surfaces are limited to 32767
 	std::string charset;
+	std::string remote_dir;
 	bool timings = false;
 
 	int opt;
-	while ((opt = getopt(argc, argv, "w:f:s:c:m:e:th")) != -1)
+	while ((opt = getopt(argc, argv, "w:f:s:c:m:e:R:th")) != -1)
 	{
+		if (opt == 'R')
+		{
+			remote_dir = optarg;
+			continue;
+		}
 		switch (opt)
 		{
 		case 'w':
@@ -200,6 +209,33 @@ int main(int argc, char** argv)
 	int height = document.Layout(width);
 	double layout_ms = Milliseconds(start);
 
+	// Remote images "arriving" after the first layout, as in Mulberry
+	double remote_ms = 0;
+	bool layout = false;
+	if (!remote_dir.empty())
+	{
+		start = std::chrono::steady_clock::now();
+		for (const std::string& url : document.GetRemoteImageURLs())
+		{
+			std::string name = url.substr(0, url.find_first_of("?#"));
+			size_t slash = name.find_last_of('/');
+			if (slash != std::string::npos)
+				name.erase(0, slash + 1);
+			if (name.empty() || (name == "..") || (name == "."))
+				continue;
+			std::ifstream file(remote_dir + "/" + name, std::ios::binary);
+			if (!file)
+				continue;
+			std::stringstream data;
+			data << file.rdbuf();
+			if (document.SetRemoteImage(url, data.str()) == htmlview::Document::ImageChange::Relayout)
+				layout = true;
+		}
+		if (layout)
+			height = document.Layout(width);
+		remote_ms = Milliseconds(start);
+	}
+
 	int image_width = std::min(std::max(width, document.GetWidth()), 16000);
 	int image_height = std::max(1, std::min(height, max_height));
 	if (height > max_height)
@@ -233,9 +269,11 @@ int main(int argc, char** argv)
 		std::snprintf(line, sizeof(line),
 					  "parse %.1f ms, layout %.1f ms, draw %.1f ms; %dx%d px; max RSS %.1f MB",
 					  parse_ms, layout_ms, draw_ms, document.GetWidth(), height, MaxRSSMegabytes());
-		if (document.GetBlockedImages() > 0)
+		size_t remote = document.GetRemoteImageURLs().size();
+		if (remote > 0)
 			std::snprintf(line + std::strlen(line), sizeof(line) - std::strlen(line),
-						  "; %d remote image URLs not loaded", document.GetBlockedImages());
+						  "; remote images: %d of %zu loaded (%.1f ms%s)", document.GetLoadedRemoteImages(),
+						  remote, remote_ms, layout ? ", new layout" : "");
 		std::cout << line << "\n";
 	}
 	return 0;

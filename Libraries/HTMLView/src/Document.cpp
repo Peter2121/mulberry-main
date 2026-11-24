@@ -166,9 +166,21 @@ bool IsDisplayableImage(const std::string& data, const Settings& settings)
 	return (data.size() <= settings.max_image_bytes) && ProbeImage(data, settings.max_image_pixels);
 }
 
-int Document::GetBlockedImages() const
+std::vector<std::string> Document::GetRemoteImageURLs() const
 {
-	return mImpl->mContainer.GetBlockedImages();
+	return mImpl->mContainer.GetRemoteImageURLs();
+}
+
+Document::ImageChange Document::SetRemoteImage(const std::string& url, const std::string& data)
+{
+	if (!mImpl->mDocument)
+		return ImageChange::NoChange;
+	return (ImageChange) mImpl->mContainer.SetRemoteImage(url, data);
+}
+
+int Document::GetLoadedRemoteImages() const
+{
+	return mImpl->mContainer.GetLoadedRemoteImages();
 }
 
 const char* Document::ResultText(Result result)

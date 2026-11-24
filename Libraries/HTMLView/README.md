@@ -39,13 +39,18 @@ Libraries/HTMLView/html2png [options] input.html [output.png]
               <meta charset>, else UTF-8)
   -m HEIGHT   maximum height of the image (default 32000)
   -e COUNT    maximum number of elements (default: the viewer's, 20000)
+  -R DIR      remote images from files: after the first layout, each remote
+              image URL is given the file of DIR named as the URL's last
+              path segment, as if downloaded (no network)
   -t          print timings and memory use
 ```
 
 The image is exactly what the viewer draws. Images: `data:` URLs, and
 `cid:NAME` or relative names as files `NAME` next to the input file (Mulberry
 finds them among the mail's parts instead). Remote images (http, https, ...)
-are never loaded; `-t` reports how many distinct remote URLs were skipped.
+are never loaded from the network: with `-R DIR` they are taken from files,
+as if downloaded; `-t` reports how many of the distinct remote URLs were
+loaded and whether a new layout was needed.
 
 To test a mail: save its HTML part to a file (in Mulberry, the part's
 "Extract" in the parts list) and render it. Mulberry will pass the part to
@@ -73,7 +78,7 @@ Real mail kept for local testing (`tests/*.eml`) is ignored by git.
 | `data:` URL (base64 or percent-encoded) | yes, decoded by the viewer |
 | `cid:` (RFC 2392) | yes: the mail part with that Content-ID (Mulberry) |
 | relative name (`image001.png`) | yes: the mail part with that file name (Mulberry) |
-| `http:`, `https:`, `ftp:`, `file:`, ... | no (remote content; counted) |
+| `http:`, `https:`, ... | not by the viewer: listed (`Document::GetRemoteImageURLs()`); the host downloads them and gives them with `SetRemoteImage()`, which says whether a redraw or a new layout is needed |
 
 Formats: PNG (Cairo), JPEG including CMYK (libjpeg-turbo), GIF first frame
 (giflib), WebP still images (libwebp, if found by configure). `<img>`,

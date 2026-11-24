@@ -36,9 +36,11 @@ public:
 
 	void SetViewportWidth(int width) { mViewportWidth = width; }
 
-	// Distinct remote image URLs (http, https, ...) the document refers to:
-	// not loaded
-	int  GetBlockedImages() const { return mBlockedImages; }
+	// Remote images (http, https, ...): never loaded here; the host gives
+	// them with SetRemoteImage()
+	const std::vector<std::string>& GetRemoteImageURLs() const { return mRemoteURLs; }
+	int  SetRemoteImage(const std::string& url, const std::string& data);	// htmlview::Document::ImageChange
+	int  GetLoadedRemoteImages() const { return mLoadedRemote; }
 
 	// Fonts and text
 	litehtml::uint_ptr	create_font(const litehtml::font_description& descr, const litehtml::document* doc,
@@ -84,9 +86,23 @@ private:
 	// Decoded images by URL; nullptr: not available (cached too, so it is
 	// looked for once)
 	std::map<std::string, cairo_surface_t*> mImages;
-	int						mBlockedImages = 0;
 
-	cairo_surface_t*	LoadImage(const std::string& url);
+	// Remote images: their URLs in the order first needed, and whether one
+	// of the uses depends on the image's size for the layout
+	std::vector<std::string>	mRemoteURLs;
+	std::map<std::string, bool>	mRemoteAffectsLayout;
+	int							mLoadedRemote = 0;
+
+	// How a use of an image depends on it: litehtml says whether only a
+	// redraw is needed once it is there (its size is known: width/height
+	// attributes, backgrounds); drawing only looks it up
+	enum class ImageUse
+	{
+		Lookup,
+		Redraw,
+		Layout
+	};
+	cairo_surface_t*	LoadImage(const std::string& url, ImageUse use);
 };
 
 }	// namespace htmlview

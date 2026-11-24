@@ -820,9 +820,9 @@ a classic table one):**
 | 5.3 | `cid:` images:<br>• the core asks the host;<br>• Mulberry finds the sibling part with that Content-ID in the enclosing `multipart/related` (`CAttachment` tree, `CMIMEContent::GetContentId()`) and reads it with the existing `ReadAttachment` code;<br>• the core lays out again once sizes are known | Thunderbird and Apple Mail messages with inline images | M–L |
 | 5.4 | Part selection: check that `FirstDisplayPart()` picks the `text/html` part inside `multipart/related` within `multipart/alternative`; inline images stay listed in the parts table as today | sample messages of each structure | S |
 | 5.5 | Remote content blocked:<br>• no network access;<br>• placeholders sized from `width`/`height`;<br>• remote style sheets and fonts ignored;<br>• count of blocked items kept for 5.6 | no connection is attempted (checked with a local HTTP server log) | S |
-| 5.6 | Information bar "Remote content blocked – Load" above the viewer, in the preview pane and the message window | appears only when something was blocked | M |
-| 5.7 | "Load": fetch through Mulberry's HTTP client (`Sources_Common/HTTP`), synchronously first, with a wait cursor, size and time limits, and a cache per message | images appear after Load; limits respected | M–L |
-| 5.8 | Later: per-sender "always load" list (preference) | list saved; applied on open | M |
+| ~~5.6~~ | ~~Information bar "Remote content blocked – Load"~~: replaced by a button (stage R4 below) | | |
+| ~~5.7~~ | ~~"Load" through Mulberry's HTTP client, synchronously~~: replaced by libcurl, asynchronous (stages R1–R5 below) | | |
+| ~~5.8~~ | ~~Per-sender "always load" list~~: dropped (nothing is remembered, see below) | | |
 
 **Stage 5, first part done (2026-11-24): images inside the mail.**
 - Tasks 5.1–5.3 and 5.5 (counting only): `cid:` images (the part with that
@@ -854,6 +854,87 @@ a classic table one):**
 - Test page `tests/50-images.html` with generated images in `tests/images`
   (PNG, JPEG, CMYK JPEG, GIF, WebP with alpha; `cid:`, names, `data:`,
   backgrounds, remote, missing, broken).
+
+**Stage 5, second part: remote images, design (decided 2026-11-24, not
+implemented yet).**
+
+*Behaviour*
+- **Minimal GUI change** (the interface will be rewritten with another
+  toolkit, probably FLTK): one new button, right of the Quotes popup ("All
+  Quotes"), like the Headers button, in the 3-pane preview and in the
+  message window. Shown only in the "as HTML" view, and only when the
+  message refers to remote images.
+  - Before loading: **"Load Remote Images: XX"**, XX = distinct remote image
+    URLs of the message.
+  - While loading: **"Loading Remote Images: n/XX"**, n = images received
+    so far.
+  - After loading: **"Loaded Remote Images: YY"**, YY = images downloaded,
+    decoded and drawn (failures, refused formats and oversized images are
+    not counted).
+- **Loading on demand, per message:** a click loads the images of the
+  message shown. **No preferences, no per-sender lists: nothing is
+  remembered** about which messages or senders may load images.
+- **Cache in memory only** (no disk cache for now), **128 MB**, keyed by URL,
+  holding the downloaded (encoded) images; when it is full, the least
+  recently used images are evicted. When a message is shown again in the
+  same session (mail 1, then mail 2, then mail 1), its cached images are
+  displayed at once, without network access; if all its remote images are
+  cached, the button reads "Loaded Remote Images: YY", else it offers the
+  missing ones. The size will become a preference later: a
+  `TODO(remote-image-cache-size)` comment at the constant in the code.
+- **Progressive display:** the message stays readable and scrollable; each
+  image appears when it arrives; layouts are grouped (a few per second at
+  most).
+- Changing message cancels the downloads still running (images already
+  received stay in the cache). Disconnected (offline) mode: the button is
+  disabled; cached images are still shown.
+- **Remote style sheets and fonts: never loaded** (unless really broken mails
+  show they are needed). **Local-network addresses are not blocked.**
+
+*Fetching: the system libcurl*
+- libcurl's multi (non-blocking) interface, in the toolkit-independent core
+  (`Libraries/HTMLView`): no threads; the host calls a short "pump"
+  regularly (a JX idle task now, an FLTK timer later).
+- Every request: `http` and `https` only, also after redirects (at most 5);
+  no cookies, no `Referer`, no credentials (a 401 fails), a neutral
+  `User-Agent`, `Accept` for images only; 16 MB per image, enforced while
+  downloading; per message about 50 MB and 200 images; 10 s to connect, 30 s
+  per image; TLS errors fail silently (no dialog); only PNG, JPEG, GIF and
+  WebP, recognised by their content (never SVG).
+- Build: `configure` checks `libcurl` (pkg-config) when the viewer is
+  enabled; `build-freebsd.sh` already requires the `curl` package. Measured:
+  libcurl 1 MB plus 2.2 MB of shared libraries Mulberry does not load yet
+  (Kerberos, libssh2, libidn2, libnghttp2, libpsl); it uses the base
+  system's OpenSSL, the same as Mulberry.
+- **Logging:** when Mulberry's HTTP log is active (logging options, `HTTP`;
+  `CLog::eLogHTTP`), libcurl's verbose output for these requests goes to it:
+  the core passes it to the host through a new `Host` callback (enabled only
+  when the host says the log is on: `CURLOPT_VERBOSE` with a
+  `CURLOPT_DEBUGFUNCTION`), and Mulberry writes it with a `CLog` of type
+  `eLogHTTP`, one log session per message's load. Logged: libcurl's text
+  messages and the request and response headers; not the image data.
+
+*Stages, each leaving the build and the program correct*
+
+| # | Task |
+|---|---|
+| R1 | Core: pending remote images (the document lists the remote URLs it skipped); a call handing it a downloaded image (decoded with the existing limits), telling whether a new layout or only a redraw is needed. `html2png -R DIR`: remote URLs mapped to local files, for tests without network |
+| R2 | Core: the libcurl fetcher with the rules above and the log callback; `configure` check; `html2png -L` really downloads (manual tests). Tests against a local Python HTTP server: redirects, size cap, timeouts, refused protocols |
+| R3 | Core: the memory cache (128 MB, least recently used out, TODO for the preference) |
+| R4 | Mulberry: the button in both views; loading on click, progressive display, cancelling; cached images shown automatically; the HTTP log |
+| R5 | Finishing: progress text, offline mode, per-message limits checked with real newsletters |
+
+**R1 done (2026-11-24).** `htmlview::Document`: `GetRemoteImageURLs()` (the
+distinct remote URLs in the order the document needed them; replaces the
+count `GetBlockedImages()`), `SetRemoteImage(url, data)` (decoded with the
+image limits; returns `ImageChange::NoChange`, `Redraw` or `Layout`) and
+`GetLoadedRemoteImages()`. A new layout is needed when one of the image's
+uses depends on its size (litehtml's `redraw_on_ready`: `<img>` without
+`width`/`height`); backgrounds and sized images need only a redraw. A
+`Layout()` after the images arrive lays the document out with their sizes
+(litehtml renders afresh at each call). `html2png -R DIR` gives remote
+images from files after the first layout; `tests/60-remote-images.html`
+(run with `-R tests/images` by `run-tests.sh`).
 
 **Milestone after stage 5:** usable for daily reading.
 
@@ -901,6 +982,10 @@ switch, and it is the default for messages with HTML (stage 3 notes).*
 | Decision | Options | Proposal |
 |---|---|---|
 | litehtml build (1.5) | litehtml's own CMake (new build tool `cmake`), or a small Makefile of ours | **Decided: CMake** (2026-11-23) |
-| Image decoders (5.1) | system libjpeg-turbo + giflib (+ libwebp), or bundled `stb_image` (no releases, so the HEAD of its branch) | system libraries: security fixes arrive through the system |
+| Image decoders (5.1) | system libjpeg-turbo + giflib (+ libwebp), or bundled `stb_image` (no releases, so the HEAD of its branch) | **Decided 2026-11-24:** system libraries (libwebp optional) |
+| Fetching remote images (stage 5, R2) | system libcurl, a minimal static libcurl (submodule), or Mulberry's own HTTP code with a thread | **Decided 2026-11-24:** system libcurl |
+| Remote images: what is remembered | per-sender list, preference, or nothing | **Decided 2026-11-24:** nothing; a button per message, memory cache of 128 MB (preference later) |
+| Remote style sheets and fonts | load with the images, or never | **Decided 2026-11-24:** never (unless broken mails show the need) |
+| Local-network addresses in remote images | block loopback/link-local, also private networks, or nothing | **Decided 2026-11-24:** nothing blocked |
 | Message header (3.4) | escaped block inside the HTML document, or a separate text widget above the viewer | **Decided 2026-11-23:** inside the document; the header area of the window does not move |
 | Default Linux HarfBuzz/Cairo (9.1) | bundled static or system shared | to be discussed (section 10.7) |

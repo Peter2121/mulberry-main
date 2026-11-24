@@ -22,6 +22,7 @@
 #include <cstddef>
 #include <memory>
 #include <string>
+#include <vector>
 
 typedef struct _cairo cairo_t;
 
@@ -82,6 +83,15 @@ bool IsDisplayableImage(const std::string& data, const Settings& settings);
 class Document
 {
 public:
+	// What a remote image given with SetRemoteImage() needs
+	enum class ImageChange
+	{
+		NoChange,		// nothing (not a pending remote image, or not decodable)
+		Redraw,			// draw again: its size was already known (width/height, background)
+		Relayout		// lay out again (Layout()), then draw
+		// (not "None": X11 defines it as a macro)
+	};
+
 	enum class Result		// not "Status": Xlib defines it as a macro
 	{
 		Ok,
@@ -116,9 +126,17 @@ public:
 	// context's coordinates too.
 	void Draw(cairo_t* cr, int x, int y, const Rect& clip);
 
-	// Number of distinct remote image URLs (http, https, ...) the document
-	// refers to: they are not loaded
-	int GetBlockedImages() const;
+	// Remote images (http, https, ...) are never loaded by the document: it
+	// lists them, and the host may download them and give them with
+	// SetRemoteImage().  Distinct URLs, in the order the document needed them.
+	std::vector<std::string> GetRemoteImageURLs() const;
+
+	// Gives the document a remote image's data (encoded), decoded with the
+	// settings' limits; see ImageChange for what the host must do then
+	ImageChange SetRemoteImage(const std::string& url, const std::string& data);
+
+	// How many remote images were given and decoded
+	int GetLoadedRemoteImages() const;
 
 	static const char* ResultText(Result result);
 
