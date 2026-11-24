@@ -13,6 +13,7 @@
 // A test tool: see README.md.
 
 #include "htmlview/Document.h"
+#include "htmlview/Fetcher.h"
 
 #include <cairo.h>
 
@@ -50,6 +51,12 @@ const char* const cUsage =
 	"  -R DIR      remote images from files: after the first layout, each\n"
 	"              remote image URL is given the file of DIR named as the\n"
 	"              URL's last path segment, as if downloaded (no network)\n"
+	"  -L          download the remote images (http, https) after the first\n"
+	"              layout, as Mulberry's \"Load Remote Images\" does; failures\n"
+	"              are reported on stderr\n"
+	"  -T SECONDS  time limit per remote image (default 30)\n"
+	"  -V          print the network log (libcurl's messages and headers) on\n"
+	"              stderr, as Mulberry writes it to its HTTP log\n"
 	"  -t          print timings and memory use\n"
 	"  -h          show this help\n"
 	"\n"
@@ -57,10 +64,40 @@ const char* const cUsage =
 	"\n"
 	"Images: data: URLs, and \"cid:NAME\" or relative names as files NAME in\n"
 	"the input's directory (as Mulberry finds them among the mail's parts).\n"
-	"Remote images (http, https, ...) are never loaded from the network.\n"
+	"Remote images (http, https, ...) are loaded only with -L.\n"
 	"\n"
 	"Exit status: 0 rendered, 1 error, 2 usage, 3 document rejected by the\n"
 	"viewer's limits (too large, too many elements or nested too deeply).\n";
+
+// Remote images downloaded with -L
+class DownloadHost : public htmlview::FetchHost
+{
+public:
+	DownloadHost(htmlview::Document& document, bool log) : mDocument(document), mLog(log) {}
+
+	void FetchDone(const std::string& url, bool ok, const std::string& data, const std::string& error) override
+	{
+		if (!ok)
+		{
+			std::cerr << "html2png: remote image failed: " << url << ": " << error << "\n";
+			return;
+		}
+		htmlview::Document::ImageChange change = mDocument.SetRemoteImage(url, data);
+		if (change == htmlview::Document::ImageChange::Relayout)
+			mRelayout = true;
+		else if (change == htmlview::Document::ImageChange::NoChange)
+			std::cerr << "html2png: remote image not shown (format or size): " << url << "\n";
+	}
+
+	bool LogEnabled() const override { return mLog; }
+	void Log(const std::string& text) override { std::cerr << text << "\n"; }
+
+	bool mRelayout = false;
+
+private:
+	htmlview::Document&	mDocument;
+	bool				mLog;
+};
 
 // Images of the test pages: files next to the input file
 class FileHost : public htmlview::Host
@@ -122,14 +159,32 @@ int main(int argc, char** argv)
 	int max_height = 32000;		// Cairo image surfaces are limited to 32767
 	std::string charset;
 	std::string remote_dir;
+	bool download = false;
+	bool network_log = false;
+	htmlview::FetchSettings fetch_settings;
 	bool timings = false;
 
 	int opt;
-	while ((opt = getopt(argc, argv, "w:f:s:c:m:e:R:th")) != -1)
+	while ((opt = getopt(argc, argv, "w:f:s:c:m:e:R:LT:Vth")) != -1)
 	{
 		if (opt == 'R')
 		{
 			remote_dir = optarg;
+			continue;
+		}
+		if (opt == 'L')
+		{
+			download = true;
+			continue;
+		}
+		if (opt == 'T')
+		{
+			fetch_settings.timeout = ParsePositive(optarg, "-T", 3600);
+			continue;
+		}
+		if (opt == 'V')
+		{
+			network_log = true;
 			continue;
 		}
 		switch (opt)
@@ -234,6 +289,24 @@ int main(int argc, char** argv)
 		if (layout)
 			height = document.Layout(width);
 		remote_ms = Milliseconds(start);
+	}
+
+	// Remote images downloaded, as in Mulberry
+	if (download)
+	{
+		start = std::chrono::steady_clock::now();
+		DownloadHost host(document, network_log);
+		htmlview::Fetcher fetcher(&host, fetch_settings);
+		for (const std::string& url : document.GetRemoteImageURLs())
+			fetcher.Add(url);
+		while (fetcher.Pump())
+			fetcher.Wait(200);
+		if (host.mRelayout)
+		{
+			layout = true;
+			height = document.Layout(width);
+		}
+		remote_ms += Milliseconds(start);
 	}
 
 	int image_width = std::min(std::max(width, document.GetWidth()), 16000);

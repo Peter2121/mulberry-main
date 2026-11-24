@@ -153,6 +153,8 @@ check_requirements() {
 		# Image decoders (PNG through Cairo)
 		need /usr/local/include/jpeglib.h jpeg-turbo
 		need /usr/local/include/gif_lib.h giflib
+		# Remote images (the curl tool is required above anyway)
+		need /usr/local/include/curl/curl.h curl
 	fi
 	if [ -n "$missing" ]; then
 		die "missing packages, install them with:

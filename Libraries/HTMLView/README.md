@@ -8,6 +8,7 @@ host gives it HTML, a width and a Cairo context, and receives callbacks.
 | File | Content |
 |---|---|
 | `include/htmlview/Document.h` | public interface: `Settings`, `Host`, `Document` |
+| `include/htmlview/Fetcher.h`, `src/Fetcher.cpp` | downloads of remote images with libcurl (non-blocking, no threads): `Fetcher`, `FetchHost`, `FetchSettings` |
 | `src/Document.cpp` | loading (with the limits below), layout, drawing; style sheet additions for mail |
 | `src/Container.*` | the litehtml container: litehtml's own `container_cairo` (borders, backgrounds, gradients, list markers) plus our text |
 | `src/Fonts.*` | fonts and text: fontconfig, fallback font per character, HarfBuzz shaping, Cairo drawing |
@@ -42,15 +43,21 @@ Libraries/HTMLView/html2png [options] input.html [output.png]
   -R DIR      remote images from files: after the first layout, each remote
               image URL is given the file of DIR named as the URL's last
               path segment, as if downloaded (no network)
+  -L          download the remote images (http, https) after the first
+              layout, as Mulberry's "Load Remote Images" does; failures
+              are reported on stderr
+  -T SECONDS  time limit per remote image (default 30)
+  -V          print the network log (libcurl's messages and headers) on
+              stderr, as Mulberry writes it to its HTTP log
   -t          print timings and memory use
 ```
 
 The image is exactly what the viewer draws. Images: `data:` URLs, and
 `cid:NAME` or relative names as files `NAME` next to the input file (Mulberry
 finds them among the mail's parts instead). Remote images (http, https, ...)
-are never loaded from the network: with `-R DIR` they are taken from files,
-as if downloaded; `-t` reports how many of the distinct remote URLs were
-loaded and whether a new layout was needed.
+are loaded only with `-L` (downloaded) or `-R DIR` (taken from files, as if
+downloaded); `-t` reports how many of the distinct remote URLs were loaded
+and whether a new layout was needed.
 
 To test a mail: save its HTML part to a file (in Mulberry, the part's
 "Extract" in the parts list) and render it. Mulberry will pass the part to
@@ -70,6 +77,27 @@ a newsletter) are synthetic. `40-…` and `41-…` are real newsletters,
 anonymised (recipient address, customer number, all links and image URLs
 replaced). `tests/images` holds generated images for `50-images.html`.
 Real mail kept for local testing (`tests/*.eml`) is ignored by git.
+
+## Remote image downloads
+
+`htmlview::Fetcher` (libcurl's multi interface): the host calls `Pump()`
+regularly and receives each image through `FetchHost::FetchDone()`, then
+gives it to `Document::SetRemoteImage()`. Every request: `http` and `https`
+only, also after redirects (at most 5); no cookies, no `Referer`, no
+credentials (a user name in the URL is refused, `.netrc` is not read); the
+User-Agent `Mozilla/5.0`; `Accept` for the decodable image formats; 16 MB per
+image (also when the size is not announced), 50 MB and 200 images per
+`Fetcher`; 10 s to connect, 30 s per image; TLS certificates checked, a
+failure is an error (never a question). When `FetchHost::LogEnabled()`,
+libcurl's messages and the request and response headers go to
+`FetchHost::Log()` (never the data).
+
+`gmake -C Libraries/HTMLView check-fetch` tests it against a local HTTP server
+(`tests/fetch-server.py`, Python 3, 127.0.0.1 only): redirects (allowed and
+too many), redirects to `file:` and `ftp:`, sizes over the limit (announced
+or not), the time limit, 401 and 404, HTML instead of an image, a user name
+in the URL, an `ftp:` URL, the 200 image limit, and the headers the server
+received (no cookie although one was set, no `Referer`, no `Authorization`).
 
 ## Images
 

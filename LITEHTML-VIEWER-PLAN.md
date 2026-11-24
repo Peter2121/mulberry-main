@@ -908,9 +908,9 @@ implemented yet).**
   system's OpenSSL, the same as Mulberry.
 - **Logging:** when Mulberry's HTTP log is active (logging options, `HTTP`;
   `CLog::eLogHTTP`), libcurl's verbose output for these requests goes to it:
-  the core passes it to the host through a new `Host` callback (enabled only
-  when the host says the log is on: `CURLOPT_VERBOSE` with a
-  `CURLOPT_DEBUGFUNCTION`), and Mulberry writes it with a `CLog` of type
+  the core passes it to the host through the fetcher's callbacks
+  (`FetchHost::LogEnabled()` / `Log()`; `CURLOPT_VERBOSE` with a
+  `CURLOPT_DEBUGFUNCTION` only when the log is on), and Mulberry writes it with a `CLog` of type
   `eLogHTTP`, one log session per message's load. Logged: libcurl's text
   messages and the request and response headers; not the image data.
 
@@ -935,6 +935,22 @@ uses depends on its size (litehtml's `redraw_on_ready`: `<img>` without
 (litehtml renders afresh at each call). `html2png -R DIR` gives remote
 images from files after the first layout; `tests/60-remote-images.html`
 (run with `-R tests/images` by `run-tests.sh`).
+
+**R2 done (2026-11-24).** `htmlview::Fetcher` (`include/htmlview/Fetcher.h`,
+`src/Fetcher.cpp`): libcurl multi interface, `Add(url)`, `Pump()`, `Wait()`
+(tools), `Cancel()`; results through `FetchHost::FetchDone(url, ok, data,
+error)`; the network log through `FetchHost::LogEnabled()` / `Log()`
+(libcurl's messages and request/response headers, prefixed `*`, `>`, `<` as
+`curl -v` does; never data). All the request rules above as libcurl options
+(`CURLOPT_PROTOCOLS_STR`/`REDIR_PROTOCOLS_STR` "http,https",
+`DISALLOW_USERNAME_IN_URL`, `NETRC` ignored, no cookie engine, `MAXFILESIZE`
+plus a check while writing, `FAILONERROR`, `PIPEWAIT` for HTTP/2); errors as
+text ("HTTP 404", "larger than the size limit", libcurl's messages).
+`configure` requires `libcurl` (pkg-config); `build-freebsd.sh` checks
+`curl/curl.h`. `html2png -L` downloads, `-T` sets the time limit, `-V` prints
+the network log. `gmake check-fetch`: 22 checks against a local Python HTTP
+server (`tests/fetch-server.py`, `tests/fetch-tests.sh`), all passing; a real
+HTTPS download (w3.org) checked by hand.
 
 **Milestone after stage 5:** usable for daily reading.
 

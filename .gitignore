@@ -37,6 +37,7 @@ autom4te.cache
 config.log
 config.status
 configure
+configure~
 Linux/mulberry
 build-stamp
 configure-stamp

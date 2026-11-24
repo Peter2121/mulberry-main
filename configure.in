@@ -525,6 +525,16 @@ if test "$enable_html_viewer" != "no"; then
         AC_MSG_ERROR([gif_lib.h (giflib) not found: it is needed by the HTML viewer (or configure with --disable-html-viewer)]))
     AC_CHECK_LIB(gif, DGifOpen, [HTMLVIEW_SYS_LIBS="$HTMLVIEW_SYS_LIBS -lgif"],
         AC_MSG_ERROR([libgif (giflib) not found: it is needed by the HTML viewer (or configure with --disable-html-viewer)]))
+    # Remote images are downloaded with libcurl
+    AC_MSG_CHECKING([for libcurl])
+    if $PKG_CONFIG --exists libcurl; then
+        AC_MSG_RESULT([yes])
+        HTMLVIEW_SYS_CFLAGS="$HTMLVIEW_SYS_CFLAGS `$PKG_CONFIG --cflags libcurl`"
+        HTMLVIEW_SYS_LIBS="$HTMLVIEW_SYS_LIBS `$PKG_CONFIG --libs libcurl`"
+    else
+        AC_MSG_RESULT([no])
+        AC_MSG_ERROR([libcurl not found: it is needed by the HTML viewer for remote images (or configure with --disable-html-viewer)])
+    fi
     AC_MSG_CHECKING([for libwebp (optional: WebP images in the HTML viewer)])
     if $PKG_CONFIG --exists libwebp; then
         AC_MSG_RESULT([yes])
