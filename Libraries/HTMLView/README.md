@@ -8,6 +8,7 @@ host gives it HTML, a width and a Cairo context, and receives callbacks.
 | File | Content |
 |---|---|
 | `include/htmlview/Document.h` | public interface: `Settings`, `Host`, `Document` |
+| `include/htmlview/ImageCache.h`, `src/ImageCache.cpp` | memory cache of downloaded remote images (128 MB, least recently used out) |
 | `include/htmlview/Fetcher.h`, `src/Fetcher.cpp` | downloads of remote images with libcurl (non-blocking, no threads): `Fetcher`, `FetchHost`, `FetchSettings` |
 | `src/Document.cpp` | loading (with the limits below), layout, drawing; style sheet additions for mail |
 | `src/Container.*` | the litehtml container: litehtml's own `container_cairo` (borders, backgrounds, gradients, list markers) plus our text |
@@ -92,7 +93,13 @@ failure is an error (never a question). When `FetchHost::LogEnabled()`,
 libcurl's messages and the request and response headers go to
 `FetchHost::Log()` (never the data).
 
-`gmake -C Libraries/HTMLView check-fetch` tests it against a local HTTP server
+`htmlview::ImageCache` keeps the downloaded images (encoded, by URL) in
+memory only, 128 MB by default (to become a preference:
+`TODO(remote-image-cache-size)`); when an image does not fit, the least
+recently used ones go first. `gmake check` runs its unit test
+(`tests/imagecache-test.cpp`) before the pages.
+
+`gmake -C Libraries/HTMLView check-fetch` tests the fetcher against a local HTTP server
 (`tests/fetch-server.py`, Python 3, 127.0.0.1 only): redirects (allowed and
 too many), redirects to `file:` and `ftp:`, sizes over the limit (announced
 or not), the time limit, 401 and 404, HTML instead of an image, a user name

@@ -31,7 +31,7 @@ CXXFLAGS = -std=gnu++17 -O2 -g -fPIC -Wall -Wextra -Wno-unused-parameter
 UPSTREAM_CXXFLAGS = -std=gnu++17 -O2 -g -fPIC -w
 
 LIBRARY = libHTMLView$A
-SOURCES = Document Container Fonts Images Fetcher TextTransform Limits
+SOURCES = Document Container Fonts Images Fetcher ImageCache TextTransform Limits
 UPSTREAM = container_cairo cairo_borders conic_gradient
 OBJS = $(SOURCES:%=obj/%$O) $(UPSTREAM:%=obj/upstream/%$O)
 
@@ -64,8 +64,17 @@ $(TOOL): obj/tools/html2png$O $(LIBRARY) $(DEPLIBS)
 
 # Renders every test page (tests/*.html and generated stress pages) into
 # tests/out, with timings; fails if html2png crashes or hangs
-check: all
+check: all imagecache-test
+	./imagecache-test
 	sh tests/run-tests.sh ./$(TOOL) tests tests/out
+
+# Unit test of the image cache
+imagecache-test: obj/tests/imagecache-test$O $(LIBRARY)
+	$(CXX) -o $@ obj/tests/imagecache-test$O $(LIBRARY) $(TOOL_LIBS)
+
+obj/tests/%$O: tests/%.cpp
+	@mkdir -p obj/tests
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -MMD -MP -c -o $@ $<
 
 # Remote image downloads against a local HTTP server (Python 3; no network
 # beyond 127.0.0.1)
@@ -73,8 +82,8 @@ check-fetch: all
 	sh tests/fetch-tests.sh ./$(TOOL) tests tests/out
 
 clean:
-	rm -rf obj $(LIBRARY) $(TOOL) tests/out
+	rm -rf obj $(LIBRARY) $(TOOL) imagecache-test tests/out
 
 distclean: clean
 
--include $(wildcard obj/*.d obj/upstream/*.d obj/tools/*.d)
+-include $(wildcard obj/*.d obj/upstream/*.d obj/tools/*.d obj/tests/*.d)

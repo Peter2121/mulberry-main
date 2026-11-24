@@ -952,6 +952,15 @@ the network log. `gmake check-fetch`: 22 checks against a local Python HTTP
 server (`tests/fetch-server.py`, `tests/fetch-tests.sh`), all passing; a real
 HTTPS download (w3.org) checked by hand.
 
+**R3 done (2026-11-24).** `htmlview::ImageCache`
+(`include/htmlview/ImageCache.h`, `src/ImageCache.cpp`): by URL, the encoded
+data as downloaded; `Get()` (counts as a use), `Contains()` (does not),
+`Put()` (replaces, removes the least recently used until the image fits; an
+image larger than the cache is not stored), `SetMaxBytes()`, `Clear()`;
+128 MB by default, with `TODO(remote-image-cache-size)` at the constant.
+Owned by the host: Mulberry keeps one for the session (all message views).
+Unit test `tests/imagecache-test.cpp` (13 checks) in `gmake check`.
+
 **Milestone after stage 5:** usable for daily reading.
 
 ### 11.8 Stage 6: selection, copy, find
