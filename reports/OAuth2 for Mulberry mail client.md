@@ -1,6 +1,6 @@
 # Build one OAuth2 engine, reserve Graph for calendars
 
-*Updated 2026-11-24: added the section "How Evolution and KMail reach Gmail", and corrected the statements about Google's CASA security assessment.*
+*Updated 2026-11-24: added the section "How Evolution and KMail reach Gmail", corrected the statements about Google's CASA security assessment, and added the Graph SDK findings ("No Graph SDK for C++", "Calendar sync").*
 
 Mulberry should implement OAuth2 itself, in-process, as a new **built-in authenticator type** rather than as a SASL plugin. The design uses the RFC 8252 native-app pattern: authorization code + PKCE (S256), the login page opened in the user's system browser, and the code returned to a one-shot listener on `127.0.0.1` at an ephemeral port. Where the provider allows it, the device-code grant serves as a fallback for headless use. Mulberry then speaks SASL **XOAUTH2 and OAUTHBEARER** natively for IMAP/POP3/SMTP/ManageSieve and sends an `Authorization: Bearer` header for CalDAV/CardDAV. Refresh tokens live in Mulberry's existing libsodium keyring. A data table of providers drives all of this, the client IDs in it are user-overridable, and RFC 8414/7591 discovery and dynamic registration cover the IETF "open public client" profile. One engine covers Google, Microsoft 365/Outlook.com, Yandex, Mail.ru, Fastmail, Zoho, Seznam and any standards-following server, and it adds **zero new link-time packages**. It needs libcurl (already linked, but only into the HTML viewer), OpenSSL/libsodium (already required), a vendored MIT JSON parser and about 200 lines of socket code. My estimate is about 1,800–2,500 new or changed lines, roughly **6–8 person-weeks**. The GUI change is one popup item, an optional small panel and one "waiting for browser sign-in" dialog. **Microsoft Graph is not needed for mail**: IMAP/POP/SMTP with OAuth2 remain supported for both Microsoft 365 and Outlook.com, and no retirement date has been announced. Graph is needed for Microsoft 365 **calendar and contacts**, because Exchange Online has no CalDAV/CardDAV. That is a separate and much larger project, a JSON sync engine plus lossy iCalendar/vCard mappers, which I estimate at 3–5 person-months; it reuses the same token engine. The real critical path is client registration, not code. Google's IMAP scope is "restricted" and requires verification, renewed every year. Google's pages disagree on whether a local-only client also needs the paid annual third-party security assessment (CASA). Yahoo/AOL mail scopes need a commercial application. Microsoft tenants often show "Need admin approval" to apps whose publisher is not verified.
 
@@ -52,13 +52,104 @@ Microsoft Graph is Microsoft's proprietary REST/JSON (OData) API at `graph.micro
 
 A Graph *mail* backend would cost far more than it returns, because it is a second, Microsoft-only mail engine. Delta sync is per folder. Item IDs change when an item moves unless `Prefer: IdType="ImmutableId"` is sent. Flags are reduced to `isRead`, follow-up flags and categories ([Graph message resource](https://learn.microsoft.com/en-us/graph/api/resources/message?view=graph-rest-1.0), [delta query](https://learn.microsoft.com/en-us/graph/delta-query-messages)). There is no IMAP `APPEND` equivalent: "non-draft MIME creation" was still on Microsoft's parity roadmap for Q4 2026 ([EWS deprecation page](https://learn.microsoft.com/en-us/exchange/clients-and-mobile-in-exchange-online/deprecation-of-ews-exchange-online)). Push works only through public webhooks, so a desktop client must poll ([change notifications](https://learn.microsoft.com/en-us/graph/change-notifications-overview)). Each app and mailbox is limited to **4 concurrent requests** and 10,000 requests per 10 minutes ([throttling limits](https://learn.microsoft.com/en-us/graph/throttling-limits)). The one mail case worth keeping in reserve is sending for tenants that have SMTP AUTH disabled. `POST /me/sendMail` accepts a base64 MIME body and works for both work and personal accounts ([Graph sendMail](https://learn.microsoft.com/en-us/graph/api/user-sendmail?view=graph-rest-1.0)). Community reports put its request ceiling around 3–4 MB, and an upload session is needed above that ([Microsoft Q&A](https://learn.microsoft.com/en-in/answers/questions/1824204/graph-api-user-sendmail-request-size-limit)). That limit makes it a fallback, not a replacement.
 
-Calendars and contacts are where Graph is unavoidable. Microsoft's client-access list for Exchange Online is ActiveSync, MAPI, Outlook on the web, IMAP and POP, with **no CalDAV or CardDAV** ([CiraSync summary](https://cirasync.com/?p=74448)). ActiveSync is proprietary and licensed, so Graph is the only realistic modern route. The work lies in translation, not transport. Graph events are JSON, not iCalendar, and no Graph endpoint imports or exports ICS ([Microsoft Q&A](https://learn.microsoft.com/en-za/answers/questions/1818512/how-can-i-use-microsoft-graph-(-powershell)-to-cop)). Delta sync in v1.0 exists only over a time-windowed `calendarView` that returns expanded occurrences and does not support `$select`. The unbounded per-calendar `events/delta` is beta, and beta is "not supported" in production ([delta for events](https://learn.microsoft.com/en-us/graph/delta-query-events)). Mulberry would therefore sync a sliding window and rebuild each series from its master event, using `exceptionOccurrences` and `cancelledOccurrences` ([Graph get event](https://learn.microsoft.com/en-us/graph/api/event-get?view=graph-rest-1.0)). Recurrence uses six pattern types and three range types ([recurrencePattern](https://learn.microsoft.com/en-us/graph/api/resources/recurrencepattern?view=graph-rest-1.0)). Every Graph pattern converts to an RRULE, but many RRULEs cannot convert back: HOURLY, multiple BYMONTHDAY values, BYWEEKNO, RDATE and others. Mulberry needs a "cannot represent" policy for those.
+Calendars and contacts are where Graph is unavoidable. Microsoft's client-access list for Exchange Online is ActiveSync, MAPI, Outlook on the web, IMAP and POP, with **no CalDAV or CardDAV** ([CiraSync summary](https://cirasync.com/?p=74448)). ActiveSync is proprietary and licensed, so Graph is the only realistic modern route. The work lies in translation, not transport. Graph events are JSON, not iCalendar, and no Graph endpoint imports or exports ICS ([Microsoft Q&A](https://learn.microsoft.com/en-za/answers/questions/1818512/how-can-i-use-microsoft-graph-(-powershell)-to-cop)). Officially, delta sync in v1.0 exists only over a time-windowed `calendarView` that returns expanded occurrences and does not support `$select`; the documentation calls the unbounded per-calendar `events/delta` beta ([delta for events](https://learn.microsoft.com/en-us/graph/delta-query-events)). In practice `events/delta` also works on v1.0 (see "Calendar sync" below). With the documented window, Mulberry would sync a sliding window and rebuild each series from its master event, using `exceptionOccurrences` and `cancelledOccurrences` ([Graph get event](https://learn.microsoft.com/en-us/graph/api/event-get?view=graph-rest-1.0)). Recurrence uses six pattern types and three range types ([recurrencePattern](https://learn.microsoft.com/en-us/graph/api/resources/recurrencepattern?view=graph-rest-1.0)). Every Graph pattern converts to an RRULE, but many RRULEs cannot convert back: HOURLY, multiple BYMONTHDAY values, BYWEEKNO, RDATE and others. Mulberry needs a "cannot represent" policy for those.
 
 Time zones are Windows names plus a fixed list of IANA aliases, and GET responses come back in UTC unless `Prefer: outlook.timezone` is sent ([dateTimeTimeZone](https://learn.microsoft.com/en-us/graph/api/resources/datetimetimezone?view=graph-rest-1.0)). In v1.0, `iCalUId` differs for each occurrence; only the beta `uid` is stable across a series ([event beta](https://learn.microsoft.com/en-us/graph/api/resources/event?view=graph-rest-beta)). Exchange performs scheduling itself through `accept`/`decline`/`cancel`. Mulberry must therefore switch off its own iTIP/iMIP output for Graph-backed calendars, or attendees will receive duplicate invitations. Events allow a single reminder ([event resource](https://learn.microsoft.com/en-us/graph/api/resources/event?view=graph-rest-1.0)).
 
 Contacts use a fixed Outlook schema. It has three email slots, one mobile number, one home, one business and one other address, and no fax or pager types ([contact resource](https://learn.microsoft.com/en-us/graph/api/resources/contact?view=graph-rest-1.0)). Personal contact lists and a Global Address List equivalent are still missing ([EWS parity roadmap](https://learn.microsoft.com/en-us/exchange/clients-and-mobile-in-exchange-online/deprecation-of-ews-exchange-online), [Evolution maintainer](https://discourse.gnome.org/t/is-microsoft-365-graph-api-expected-to-be-available-in-evolution-3-60-x/36019)). Unmapped vCard data must be kept in open extensions so that it survives a round trip.
 
 The good news is on the authorization side. `Calendars.ReadWrite`, `Contacts.ReadWrite` and `People.Read` need no admin consent and can be granted by personal accounts ([Graph permissions reference](https://learn.microsoft.com/en-us/graph/permissions-reference)), although tenant policy can still restrict user consent. An access token is issued for **one resource only**, but "refresh tokens … aren't tied to a resource" ([Microsoft: refresh tokens](https://learn.microsoft.com/en-us/entra/identity-platform/refresh-tokens), [MSAL resources and scopes](https://learn.microsoft.com/en-us/entra/msal/javascript/browser/resources-and-scopes)). One sign-in can therefore collect consent for both `outlook.office.com` and `graph.microsoft.com`. The token engine then mints a token for each resource with separate `refresh_token` grants. This raw-protocol behaviour is inferred from the MSAL documentation and has not been tested. Two open-source mappings exist to learn from. evolution-ews is **LGPL-2.1** ([openSUSE spec](https://build.opensuse.org/projects/openSUSE/packages/evolution-ews/files/evolution-ews.spec?expand=0)). DavMail 7.0.0, released September 2026 with 70 Graph changes, is **GPL-2.0** ([Help Net Security](https://helpnetsecurity.com/2026/09/22/davmail-7-0-0-microsoft-graph), [Debian copyright](https://metadata.ftp-master.debian.org/changelogs/main/d/davmail/stable_copyright)). Mulberry is Apache-2.0 ([LICENSE](../LICENSE)), so both are references to study, not code to copy. DavMail in O365Graph mode also works today as a local CalDAV/CardDAV gateway. Mulberry's *existing* DAV clients can talk to Microsoft 365 through it without new Mulberry code, at the price of a Java daemon.
+
+### No Graph SDK for C++: a thin REST layer over libcurl
+
+**No Graph SDK exists in C or C++, official or community, and none is planned.** Microsoft's [SDK overview](https://learn.microsoft.com/en-us/graph/sdks/sdks-overview) lists "C#, CLI, PowerShell, TypeScript | JavaScript, Java, Go, PHP, Python". As of 2026-11-24 the C#, Java, Go, Python, PHP and PowerShell SDKs are maintained. The TypeScript SDK is still pre-release. The CLI, Ruby, Objective-C, iOS and Android SDKs are archived.
+
+None of the 233 repositories in the `microsoftgraph` GitHub organisation is written in C or C++. Microsoft's own C++ REST library is archived too; its [README](https://github.com/microsoft/cpprestsdk) says "This repository is no longer maintained … alternatives … include libcurl or Boost beast". The overview page also notes that "Microsoft CSS doesn't officially support SDKs but Microsoft supports the HTTP request". Using the raw REST API is therefore a fully supported way to use Graph.
+
+The other ways to get generated or ready-made C++ code all fail:
+
+- **Kiota** generates the official SDKs. Its targets in [v1.39](https://github.com/microsoft/kiota) (2026-11) are C#, Java, Go, PHP and Python (stable), TypeScript and Ruby (preview) and Dart (experimental). It has no C++ target, and no plan for one was found.
+- **openapi-generator over Microsoft's OpenAPI description** is possible in principle. The description is [msgraph-metadata](https://github.com/microsoftgraph/msgraph-metadata) (MIT): `openapi.yaml` is 44.9 MB for v1.0, and the pre-split module files are `Calendar.yml` (700 KB) and `PersonalContacts.yml` (136 KB). The C++ client generators need cpprestsdk (archived), Qt, Boost or Oat++. Its plain `c` generator (libcurl + cJSON) would fit Mulberry's dependencies, but it produces only the trivial part: data structures and simple calls. Paging, delta, `@removed`, `@odata.type`, the `Prefer` headers, `$batch` and retry on 429 must still be written by hand, and so must the iCalendar/vCard mapping, which is the real work.
+- **Community libraries** don't fit. GNOME's [msgraph](https://gitlab.gnome.org/GNOME/msgraph) (LGPL-3.0+, FreeBSD `net/msgraph`) needs GLib, libsoup, json-glib and GNOME Online Accounts, and has no calendar support, no delta and no contact writes. The Microsoft 365 code in evolution-ews (LGPL-2.1+, GLib) and KDE's Graph resource (LGPL, Qt) are internal code, not libraries, and copyleft. They can be studied but not copied into Apache-2.0 sources. The rest is Arduino/ESP32 experiments and security tools.
+- **MSAL**, Microsoft's sign-in library, has no public C++ version ([MSAL overview](https://learn.microsoft.com/en-us/entra/identity-platform/msal-overview)). Mulberry doesn't need it: the plain v2.0 authorization-code + PKCE flow is fully documented for public desktop clients, which "must not use secrets" ([auth code flow](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow)).
+
+**The official Java SDK can serve as a reference, not as a template to mirror.** It is MIT-licensed (from general knowledge, not re-checked in this research), and MIT code may be translated into Apache-2.0 sources if the notice is kept. It has three layers, of unequal value to Mulberry:
+
+| Layer | Contents | Use for Mulberry |
+|---|---|---|
+| `msgraph-sdk-java` (generated by Kiota) | thousands of model classes (`Event`, `Contact`, `PatternedRecurrence`…) and fluent request builders | Consult occasionally to check a field. The models come from the same OpenAPI files Mulberry can read directly. Do not reproduce the request builders: Mulberry needs about twenty endpoints, not the whole API |
+| `msgraph-sdk-java-core` (hand-written) | retry handler (429/503, `Retry-After`), redirects, `PageIterator`, `BatchRequestContent`, upload sessions | **Port the logic**: this is the Graph know-how, a few hundred lines that fit into a libcurl wrapper |
+| `kiota-java` (hand-written) | request adapter, `ParseNode` / `SerializationWriter`, `AdditionalData` | **Copy the design** for a small C++ interface over cJSON. `AdditionalData` keeps unknown JSON fields, so data Graph does not model survives a round trip |
+
+The Go equivalents (`msgraph-sdk-go-core`, `kiota-http-go`, MIT) contain the same logic in more compact code. Microsoft's [msgraph-sdk-design](https://github.com/microsoftgraph/msgraph-sdk-design) repository (MIT) describes in prose the expected behaviour of the retry, redirect and delta handlers and of the page iterator. Reading that spec first and then one implementation is the fastest route.
+
+**Recommended stack:**
+
+- **HTTP:** libcurl, with `CURLOPT_ACCEPT_ENCODING` and system CAs.
+- **JSON:** vendored cJSON (MIT).
+- **Data structures:** a small build-time Python script that turns the trimmed OpenAPI modules into C++ structs and cJSON (de)serializers. The closure is 42 schemas for `event` and `calendar` and 10 for `contact` and `contactFolder`. This is the approach Thunderbird takes: its Rust crate `ms_graph_tb` (MPL-2.0) generates only the types and paths listed in `supported_types.txt` and `supported_paths.txt`, from a pinned, checksummed `openapi.yaml`.
+
+The REST surface on `https://graph.microsoft.com/v1.0` is small:
+
+- **Bootstrap:** `GET /me` and `GET /me/mailboxSettings`, which gives the user's time zone.
+- **Calendars:**
+  - `GET /me/calendars`;
+  - event sync (next subsection);
+  - `GET /me/events/{id}`, the series master with `recurrence`;
+  - `…/instances`;
+  - create, `PATCH` and `DELETE` of events;
+  - `accept`, `tentativelyAccept`, `decline` and `cancel`;
+  - optionally `getSchedule` for free/busy.
+- **Contacts:**
+  - `GET /me/contactFolders`;
+  - `…/contactFolders/{id}/contacts/delta` and `/me/contacts/delta`;
+  - create, `PATCH` and `DELETE` of contacts;
+  - the photo via `…/photo/$value`.
+- **Mail, optional:** `POST /me/sendMail` with a base64 MIME body.
+- **Unmapped iCalendar/vCard data:** open extensions or `singleValueExtendedProperties`.
+
+The request rules:
+
+- **Headers:**
+  - `Authorization: Bearer`.
+  - `Prefer: IdType="ImmutableId"` on every request, so IDs survive moves ([immutable IDs](https://learn.microsoft.com/en-us/graph/outlook-immutable-id)).
+  - `Prefer: outlook.timezone="…"`, otherwise responses come in UTC.
+  - `Prefer: odata.maxpagesize=50`.
+  - `Prefer: outlook.body-content-type`.
+  - `client-request-id`, for diagnostics.
+- **Paging and delta:** follow `@odata.nextLink` verbatim until `@odata.deltaLink`, persist the delta link, and handle `@removed`. When a delta token is rejected, restart with a full resync, as Evolution does.
+- **Throttling:**
+  - at most 20 requests per `$batch`, each throttled individually ([JSON batching](https://learn.microsoft.com/en-us/graph/json-batching));
+  - at most **4 concurrent requests** and 10,000 requests per 10 minutes per app and mailbox ([throttling limits](https://learn.microsoft.com/en-us/graph/throttling-limits));
+  - honour `Retry-After` on 429, 503 and 504, falling back to exponential back-off.
+- **Authentication:** on 401, refresh the token once and retry.
+
+**Size estimate (judgement):**
+
+- REST core (HTTP wrapper, retry and back-off, paging and delta driver, batch, error parsing): about 1,000–1,500 lines.
+- Models and (de)serializers: about 1,000–2,000 lines, or generated.
+- The iCalendar/vCard mapping remains the bulk of the work.
+
+This fits the 3–5 person-month estimate for the whole adapter.
+
+**Licences of the reference material:**
+
+- **Reusable:**
+  - msgraph-metadata, msgraph-sdk-design, the Java and Go SDK cores, and Kiota's libraries (MIT);
+  - openapi-generator templates (Apache-2.0);
+  - CLDR `windowsZones.xml` (Unicode licence), needed for the Windows↔IANA time-zone table.
+- **Usable with attribution:** the Graph documentation (CC-BY-4.0).
+- **Study only:** Thunderbird's `ms_graph_tb` (MPL-2.0), evolution-ews (LGPL-2.1+), KDE's Graph resource (LGPL-2.0+), GNOME msgraph (LGPL-3.0+) and DavMail (GPL-2.0).
+
+### Calendar sync: the windowed view and the undocumented `events/delta`
+
+[Microsoft's delta documentation](https://learn.microsoft.com/en-us/graph/delta-query-events) offers, in v1.0, only `calendarView/delta`. It is limited to a date window, returns expanded occurrences and supports no `$select`. The documentation says an unbounded per-calendar delta "is currently available only in the beta version".
+
+However, `GET /me/calendars/{id}/events/delta` **is present in the v1.0 OpenAPI description**. evolution-ews has used it in production on v1.0 since June 2026 (Evolution 3.62), and Thunderbird's allow-list contains `/users/{user-id}/calendars/{calendar-id}/events/delta()`. It is therefore implemented but undocumented.
+
+Evolution found that Graph clamps its page size to 50 and that larger initial syncs fail with 504. The source comment reads: "Graph clamps 'Prefer: odata.maxpagesize' to 50 for the events delta endpoint … can exceed the gateway timeout … failing every initial sync with 504".
+
+If `events/delta` holds, Mulberry can sync whole calendars, series masters included, instead of a sliding window. It must be tested against a real Microsoft 365 tenant and an Outlook.com account before being relied on, keeping `calendarView/delta` as the documented fallback.
 
 ## Eight ways to bolt on OAuth2, and why the in-process loopback flow wins
 
@@ -372,7 +463,7 @@ The core figure is consistent with the reference implementations. Claws needed a
 The Graph calendar and contacts adapter is a different order of magnitude. It would add new `CCalendarClient` and address-book client subclasses beside `CWebDAVCalendarClient`/`CWebDAVVCardClient`, and new server types in `CINETAccount` ([CINETAccount.h:38-59](../Sources_Common/Application/Preferences/CINETAccount.h)). Inside them sit four pieces:
 
 - an OData client with paging, `Prefer` headers, ImmutableId, 429/`Retry-After` handling and a four-request concurrency limiter;
-- a windowed calendarView delta sync that reconstructs series from their masters;
+- a calendar delta sync: per-calendar `events/delta` if it proves reliable, otherwise a windowed calendarView delta that reconstructs series from their masters;
 - per-folder contacts delta;
 - bidirectional event↔VEVENT and contact↔vCard mappers, including a Windows↔IANA time-zone table and iMIP suppression.
 
