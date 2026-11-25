@@ -1,0 +1,121 @@
+{
+  "_comment": "OAuth2 providers, installed as ${sysconfdir}/<app>/oauth2-providers.conf.json. Do not edit the installed copy: put changes and client IDs in ~/.config/<app>/oauth2-providers.conf.json, which overrides it key by key. Keys: Libraries/OAuth2/README.md.",
+  "version": 1,
+  "providers": {
+    "google": {
+      "_comment": "Checked 2026-11-25 (docs/oauth2/register-google.md). No client ID: each user registers one (decision D9). Google offers no device code for mail scopes.",
+      "name": "Google",
+      "hosts": ["imap.gmail.com", "smtp.gmail.com", "pop.gmail.com",
+                "apidata.googleusercontent.com", "www.googleapis.com"],
+      "domains": ["gmail.com", "googlemail.com"],
+      "authorization_endpoint": "https://accounts.google.com/o/oauth2/v2/auth",
+      "token_endpoint": "https://oauth2.googleapis.com/token",
+      "revocation_endpoint": "https://oauth2.googleapis.com/revoke",
+      "scopes": {
+        "always": ["openid", "email"],
+        "mail": ["https://mail.google.com/"],
+        "calendar": ["https://www.googleapis.com/auth/calendar"],
+        "contacts": ["https://www.googleapis.com/auth/carddav"]
+      },
+      "authorization_params": { "access_type": "offline" },
+      "redirect": "http://127.0.0.1",
+      "pkce": true,
+      "sasl": ["OAUTHBEARER", "XOAUTH2"],
+      "client_id": "",
+      "client_secret": ""
+    },
+    "microsoft": {
+      "_comment": "Checked 2026-11-25 (docs/oauth2/register-microsoft.md). Outlook.com and Microsoft 365 mail; calendar and contacts need Graph (a later plan). Public client: no secret.",
+      "name": "Microsoft",
+      "hosts": ["outlook.office365.com", "smtp.office365.com", "smtp-mail.outlook.com",
+                "outlook.office.com", "imap-mail.outlook.com", "pop-mail.outlook.com"],
+      "domains": ["outlook.com", "hotmail.com", "live.com", "msn.com",
+                  "outlook.fr", "hotmail.fr", "live.fr"],
+      "authorization_endpoint": "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize",
+      "token_endpoint": "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token",
+      "device_authorization_endpoint": "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/devicecode",
+      "scopes": {
+        "always": ["offline_access", "openid", "email", "profile"],
+        "mail": ["https://outlook.office.com/IMAP.AccessAsUser.All",
+                 "https://outlook.office.com/POP.AccessAsUser.All",
+                 "https://outlook.office.com/SMTP.Send"]
+      },
+      "redirect": "http://localhost",
+      "pkce": true,
+      "sasl": ["XOAUTH2"],
+      "tenant": "common",
+      "client_id": ""
+    },
+    "yahoo": {
+      "_comment": "Unverified: mail scopes need Yahoo's approval (docs/oauth2/register-yahoo.md, stage 7). The redirect form Yahoo accepts is not known yet.",
+      "name": "Yahoo",
+      "hosts": ["imap.mail.yahoo.com", "smtp.mail.yahoo.com", "pop.mail.yahoo.com"],
+      "domains": ["yahoo.com", "ymail.com", "rocketmail.com", "yahoo.fr"],
+      "authorization_endpoint": "https://api.login.yahoo.com/oauth2/request_auth",
+      "token_endpoint": "https://api.login.yahoo.com/oauth2/get_token",
+      "scopes": {
+        "always": ["openid", "email"],
+        "mail": ["mail-w"]
+      },
+      "redirect": "http://localhost",
+      "pkce": true,
+      "sasl": ["OAUTHBEARER", "XOAUTH2"],
+      "client_id": "",
+      "client_secret": ""
+    },
+    "yandex": {
+      "_comment": "Unverified: no test account (stage 8). Self-service registration at https://oauth.yandex.ru/client/new/.",
+      "name": "Yandex",
+      "hosts": ["imap.yandex.com", "smtp.yandex.com", "pop.yandex.com",
+                "imap.yandex.ru", "smtp.yandex.ru", "pop.yandex.ru", "imap.ya.ru"],
+      "domains": ["yandex.com", "yandex.ru", "ya.ru"],
+      "authorization_endpoint": "https://oauth.yandex.com/authorize",
+      "token_endpoint": "https://oauth.yandex.com/token",
+      "device_authorization_endpoint": "https://oauth.yandex.com/device/code",
+      "scopes": {
+        "mail": ["mail:imap_full", "mail:smtp"]
+      },
+      "redirect": "http://localhost",
+      "pkce": true,
+      "sasl": ["XOAUTH2"],
+      "client_id": "",
+      "client_secret": ""
+    },
+    "mailru": {
+      "_comment": "Unverified: no test account (stage 8); endpoints from Thunderbird. Since 2026 Mail.ru may require a paid subscription for third-party clients.",
+      "name": "Mail.ru",
+      "hosts": ["imap.mail.ru", "smtp.mail.ru", "pop.mail.ru"],
+      "domains": ["mail.ru", "inbox.ru", "list.ru", "bk.ru", "internet.ru"],
+      "authorization_endpoint": "https://o2.mail.ru/login",
+      "token_endpoint": "https://o2.mail.ru/token",
+      "scopes": {
+        "always": ["userinfo"],
+        "mail": ["mail.imap"]
+      },
+      "redirect": "http://localhost",
+      "pkce": true,
+      "sasl": ["XOAUTH2"],
+      "client_id": "",
+      "client_secret": ""
+    },
+    "zoho": {
+      "_comment": "Unverified: no test account (stage 8). Endpoints of the .com data centre; accounts in another one (.eu, .in) override the endpoints in their user file. OAuth for SMTP was not observed.",
+      "name": "Zoho",
+      "hosts": ["imap.zoho.com", "imappro.zoho.com", "pop.zoho.com", "poppro.zoho.com",
+                "smtp.zoho.com", "smtppro.zoho.com"],
+      "domains": ["zoho.com", "zohomail.com"],
+      "authorization_endpoint": "https://accounts.zoho.com/oauth/v2/auth",
+      "token_endpoint": "https://accounts.zoho.com/oauth/v2/token",
+      "device_authorization_endpoint": "https://accounts.zoho.com/oauth/v3/device/code",
+      "scopes": {
+        "mail": ["ZOHOMAIL.PROTOCOL.IMAP", "ZOHOMAIL.PROTOCOL.POP"]
+      },
+      "authorization_params": { "access_type": "offline" },
+      "redirect": "http://localhost",
+      "pkce": true,
+      "sasl": ["XOAUTH2"],
+      "client_id": "",
+      "client_secret": ""
+    }
+  }
+}

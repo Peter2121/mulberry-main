@@ -35,6 +35,90 @@ of the repository.
 | `Random.h` | `RandomBytes()` (libsodium), `MakeState()`, `ConstantTimeEquals()` |
 | `Pkce.h` | `MakePkce()`, `PkceChallengeS256()` (RFC 7636, S256 only), `IsValidPkceVerifier()` |
 | `Redact.h` | `Redact()` ("<redacted N bytes>"), `RedactParams()` for query strings and form bodies |
+| `Paths.h` | home folder, `~/.config/<id>` (XDG), environment prefix, `DisplayPath()` |
+| `Permissions.h` | `CheckPermissions()` and `FixPermissions()` of the user and system files |
+| `Provider.h` | `oauth2::Provider`, `AccountSettings`, `WithAccountSettings()` |
+| `ProviderConfig.h` | loading, strict checks and merging of the provider files; lookup by id, server name and e-mail domain |
+
+## Provider configuration files
+
+Two files, the second overriding the first (`OAUTH2-PLAN.md`, section 7):
+
+1. the system file, `${sysconfdir}/<id>/oauth2-providers.conf.json`
+   (`/usr/local/etc/mulberry/…` with the default prefix), installed by
+   `gmake install` from `data/oauth2-providers.conf.json`. In the build tree,
+   name it with `$MULBERRY_OAUTH2_SYSTEM_CONFIG` or
+   `oauth2-tool --system-config`;
+2. the user file, `~/.config/<id>/oauth2-providers.conf.json`
+   (`$XDG_CONFIG_HOME/<id>/…` when that variable is set).
+
+Then each account's own client ID, secret and tenant override both
+(`WithAccountSettings()`).
+
+### Format
+
+```json
+{
+  "version": 1,
+  "providers": {
+    "<id>": { "<key>": <value>, ... }
+  }
+}
+```
+
+- `version` (required): `1`.
+- Provider identifiers: `a-z`, `0-9` and `-`, not starting with `-`.
+- `"_comment"`: a string, accepted and ignored in any object.
+
+### Provider keys
+
+| Key | Type | Required | Meaning |
+|---|---|---|---|
+| `name` | string | yes | name shown to the user |
+| `enabled` | boolean | no (`true`) | `false` hides the provider (also one of the system file) |
+| `hosts` | list of names | no | server names (IMAP, SMTP, POP, CalDAV...) that select the provider; lower case |
+| `domains` | list of names | no | e-mail domains that select the provider |
+| `authorization_endpoint` | https URL | yes | |
+| `token_endpoint` | https URL | yes | |
+| `device_authorization_endpoint` | https URL or `""` | no | device code (RFC 8628); absent or `""`: not offered |
+| `revocation_endpoint` | https URL or `""` | no | RFC 7009 |
+| `scopes` | object | yes | scope lists per group: `always` (added to every request), `mail`, `calendar`, `contacts` |
+| `authorization_params` | object of strings | no | extra parameters of the authorization request (`"access_type": "offline"`); the ones the application sets (`client_id`, `scope`, `state`...) are refused |
+| `redirect` | string | yes | `http://127.0.0.1`, `http://localhost` or `http://[::1]`, no port (added at run time), optional path |
+| `pkce` | boolean | no (`true`) | send a PKCE S256 challenge |
+| `sasl` | list | no (`["XOAUTH2"]`) | `"OAUTHBEARER"` and `"XOAUTH2"` in order of preference |
+| `client_id` | string | no | |
+| `client_secret` | string | no | |
+| `tenant` | string | no | replaces `{tenant}` in the endpoints (Microsoft: `common`, `organizations`, `consumers`, a tenant ID or domain); required when an endpoint contains `{tenant}` |
+
+### Merging and checks
+
+- Each key of the user file replaces the system file's value; `scopes` and
+  `authorization_params` merge key by key; lists are replaced whole. A
+  provider only in the user file must have all the required keys.
+- Strict: no comments, trailing commas or single quotes; duplicate keys,
+  unknown keys and wrong types are errors. The first error in reading order
+  is reported as `file:line:column: message`, then the application exits.
+- A server name or domain listed by two enabled providers is an error.
+- A missing user file is normal. Without the system file OAuth2 is
+  unavailable, but the user file is still checked.
+- Permissions are checked before reading, with warnings only: the user file
+  must be `0600` (or `0400`), owned by the user, in a folder only the user
+  can write, and not a symbolic link out of the home folder; the system file
+  must belong to root and be writable by nobody else.
+
+## oauth2-tool
+
+```sh
+oauth2-tool [options] providers        # check the files and list the providers
+oauth2-tool [options] lookup NAME      # provider of a server name or e-mail address
+oauth2-tool --version
+```
+
+Options: `--system-config FILE`, `--user-config FILE`, `--no-user-config`,
+`--fix-permissions`. Exit status: 0 success, 1 nothing found (or no system
+file), 2 usage or configuration error. Client secrets are shown as
+`<redacted N bytes>`.
 
 ## Building and testing
 

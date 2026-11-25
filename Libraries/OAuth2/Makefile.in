@@ -10,12 +10,18 @@
 # Compatibility: GNU
 #
 
-.PHONY: all clean distclean check
+.PHONY: all clean distclean check install uninstall
 
 CXX = @CXX@
 AR = @AR@
+INSTALL = @INSTALL@
 O = .o
 A = .a
+
+# The system provider file is installed into $(SYSCONFDIR)/<app id>/
+DESTDIR = @DESTDIR@
+SYSCONFDIR = @OAUTH2_SYSCONFDIR@
+PROVIDER_FILE = oauth2-providers.conf.json
 
 include ../../Build/make.version
 
@@ -38,11 +44,15 @@ CPPFLAGS = -Iinclude -Isrc -Ithirdparty -DJSON_USE_IMPLICIT_CONVERSIONS=0 \
 CXXFLAGS = -std=gnu++17 -O2 -g -fPIC -Wall -Wextra -Wno-unused-parameter
 TOOL_CPPFLAGS = -DOAUTH2_TOOL_APP_ID='"$(APP_ID)"' \
 	-DOAUTH2_TOOL_APP_NAME='"$(APP_NAME)"' \
-	-DOAUTH2_TOOL_APP_VERSION='"$(APP_VERSION)"'
+	-DOAUTH2_TOOL_APP_VERSION='"$(APP_VERSION)"' \
+	-DOAUTH2_TOOL_SYSCONFDIR='"$(SYSCONFDIR)"'
 
 LIBRARY = libOAuth2$A
-SOURCES = Identity Version Encoding Random Pkce Redact
+SOURCES = Identity Version Encoding Random Pkce Redact Paths Permissions Provider \
+	ProviderConfig JsonIndex
 OBJS = $(SOURCES:%=obj/%$O)
+
+CONFDIR = $(DESTDIR)$(SYSCONFDIR)/$(APP_ID)
 
 TOOL = oauth2-tool
 UNIT = oauth2-unit
@@ -74,10 +84,24 @@ $(TOOL): obj/tools/oauth2-tool$O $(LIBRARY)
 $(UNIT): obj/tests/unit$O $(LIBRARY)
 	$(CXX) -o $@ obj/tests/unit$O $(LIBRARY) $(SYS_LIBS) $(TOOL_LIBS)
 
-# Offline checks: no network, no account
+# Offline checks: no network, no account.  The unit tests read
+# data/$(PROVIDER_FILE) and create their temporary files in obj/tests/.  The
+# last line validates the shipped system file as the application would.
 check: all $(UNIT)
 	./$(UNIT)
 	./$(TOOL) --version
+	./$(TOOL) --system-config data/$(PROVIDER_FILE) --no-user-config providers > /dev/null
+	@echo "data/$(PROVIDER_FILE): valid"
+
+# The system provider file (OAUTH2-PLAN.md, section 7); oauth2-tool stays in
+# the build tree (decision D7)
+install:
+	$(INSTALL) -d $(CONFDIR)
+	$(INSTALL) -m 644 data/$(PROVIDER_FILE) $(CONFDIR)/$(PROVIDER_FILE)
+
+uninstall:
+	rm -f $(CONFDIR)/$(PROVIDER_FILE)
+	-rmdir $(CONFDIR) 2>/dev/null
 
 clean:
 	rm -rf obj $(LIBRARY) $(TOOL) $(UNIT)

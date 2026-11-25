@@ -64,8 +64,10 @@ install: all
 	$(MAKE) -C Plug-ins $@
 	$(MAKE) -C Build $@
 	$(MAKE) -C Sources_Common $@
+	$(MAKE) -C Libraries/OAuth2 $@
 
 uninstall:
+	$(MAKE) -C Libraries/OAuth2 $@
 	$(MAKE) -C Sources_Common $@
 	$(MAKE) -C Build $@
 	$(MAKE) -C Plug-ins $@

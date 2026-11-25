@@ -14,15 +14,24 @@
 
 #include "oauth2/Encoding.h"
 #include "oauth2/Identity.h"
+#include "oauth2/Paths.h"
+#include "oauth2/Permissions.h"
 #include "oauth2/Pkce.h"
+#include "oauth2/ProviderConfig.h"
 #include "oauth2/Random.h"
 #include "oauth2/Redact.h"
 #include "oauth2/Version.h"
 
 #include <nlohmann/json.hpp>
 
+#include <sys/stat.h>
+#include <unistd.h>
+
 #include <cstdio>
+#include <cstdlib>
+#include <fstream>
 #include <set>
+#include <sstream>
 #include <string>
 
 namespace
@@ -290,6 +299,534 @@ void TestJson()
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Provider configuration (task 1.3)
+// ---------------------------------------------------------------------------
+
+const char* const cShippedFile = "data/oauth2-providers.conf.json";
+
+std::string ReadText(const std::string& path)
+{
+	std::ifstream in(path, std::ios::binary);
+	std::ostringstream text;
+	text << in.rdbuf();
+	return text.str();
+}
+
+void WriteText(const std::string& path, const std::string& text, mode_t mode)
+{
+	std::ofstream out(path, std::ios::binary | std::ios::trunc);
+	out << text;
+	out.close();
+	chmod(path.c_str(), mode);
+}
+
+mode_t Mode(const std::string& path)
+{
+	struct stat info;
+	return stat(path.c_str(), &info) == 0 ? (info.st_mode & 07777) : 0;
+}
+
+// A small valid system file for the error tests
+const char* const cSystem = R"({
+  "version": 1,
+  "providers": {
+    "example": {
+      "name": "Example",
+      "hosts": ["imap.example.com", "smtp.example.com"],
+      "domains": ["example.com"],
+      "authorization_endpoint": "https://auth.example.com/authorize",
+      "token_endpoint": "https://auth.example.com/token",
+      "scopes": { "mail": ["mail"], "calendar": ["cal"] },
+      "redirect": "http://127.0.0.1"
+    }
+  }
+})";
+
+// Loads cSystem and a user text; checks that it fails with the message part
+// at line:column of the given file
+void ExpectError(const std::string& system, const std::string& user, const std::string& file,
+	size_t line, size_t column, const std::string& part, int sourceLine)
+{
+	oauth2::ProviderConfig config;
+	oauth2::ConfigError error;
+	const bool ok = config.LoadTexts("system.json", system, "user.json", user, error);
+	const bool good = !ok && error.file == file && error.line == line && error.column == column &&
+		error.message.find(part) != std::string::npos;
+	Check(good, ("error \"" + part + "\" at " + file + ":" + std::to_string(line) + ":" +
+		std::to_string(column)).c_str(), __FILE__, sourceLine);
+	if (!good)
+		std::fprintf(stderr, "    got: %s\n", ok ? "(no error)" : error.ToString().c_str());
+}
+
+#define EXPECT_USER_ERROR(user, line, column, part) \
+	ExpectError(cSystem, user, "user.json", line, column, part, __LINE__)
+
+void TestShippedFile()
+{
+	oauth2::ProviderConfig config;
+	oauth2::ConfigError error;
+	const std::string text = ReadText(cShippedFile);
+	CHECK(!text.empty());
+	const bool ok = config.LoadTexts(cShippedFile, text, "", "", error);
+	CHECK(ok);
+	if (!ok)
+	{
+		std::fprintf(stderr, "    %s\n", error.ToString().c_str());
+		return;
+	}
+	CHECK(config.SystemFileFound());
+
+	// The plan's hostname lookups
+	struct { const char* host; const char* provider; } const lookups[] = {
+		{ "imap.gmail.com", "google" }, { "outlook.office365.com", "microsoft" },
+		{ "smtp-mail.outlook.com", "microsoft" }, { "imap.mail.yahoo.com", "yahoo" },
+		{ "smtp.gmail.com", "google" }, { "pop.gmail.com", "google" },
+		{ "apidata.googleusercontent.com", "google" }, { "smtp.office365.com", "microsoft" },
+		{ "IMAP.Gmail.COM.", "google" }, { "imap.yandex.com", "yandex" },
+		{ "imap.mail.ru", "mailru" }, { "imap.zoho.com", "zoho" } };
+	for (const auto& lookup : lookups)
+	{
+		const oauth2::Provider* p = config.FindByHost(lookup.host);
+		CHECK(p && p->id == lookup.provider);
+	}
+	CHECK(!config.FindByHost("imap.example.org"));
+	CHECK(!config.FindByHost("gmail.com"));
+	CHECK(!config.FindByHost(""));
+
+	CHECK(config.FindByEmail("someone@gmail.com") && config.FindByEmail("someone@gmail.com")->id == "google");
+	CHECK(config.FindByEmail("A.B@Outlook.COM") && config.FindByEmail("A.B@Outlook.COM")->id == "microsoft");
+	CHECK(config.FindByEmail("x@yahoo.com") && config.FindByEmail("x@yahoo.com")->id == "yahoo");
+	CHECK(!config.FindByEmail("someone@example.org"));
+	CHECK(!config.FindByEmail("no-at-sign"));
+	CHECK(!config.FindByEmail("trailing@"));
+
+	// No client ID is shipped
+	for (const oauth2::Provider& p : config.Providers())
+	{
+		CHECK(p.client_id.empty());
+		CHECK(p.client_secret.empty());
+		CHECK(!p.redirect.empty());
+		CHECK(!p.sasl.empty());
+	}
+	CHECK(config.Providers().size() == 6);
+
+	const oauth2::Provider* google = config.Find("google");
+	CHECK(google && !google->SupportsDeviceCode());
+	CHECK(google && google->authorization_params.at("access_type") == "offline");
+	CHECK(google && google->ScopesFor({ oauth2::cScopeMail, oauth2::cScopeCalendar }) ==
+		std::vector<std::string>({ "openid", "email", "https://mail.google.com/",
+			"https://www.googleapis.com/auth/calendar" }));
+	CHECK(google && google->sasl.front() == "OAUTHBEARER");
+
+	const oauth2::Provider* microsoft = config.Find("microsoft");
+	CHECK(microsoft && microsoft->SupportsDeviceCode());
+	CHECK(microsoft && microsoft->ResolveEndpoint(microsoft->token_endpoint) ==
+		"https://login.microsoftonline.com/common/oauth2/v2.0/token");
+	CHECK(microsoft && microsoft->redirect == "http://localhost");
+	CHECK(microsoft && microsoft->ScopesFor({ oauth2::cScopeCalendar }) ==
+		std::vector<std::string>({ "offline_access", "openid", "email", "profile" }));
+
+	// Level 3: the account's own settings
+	if (microsoft)
+	{
+		oauth2::AccountSettings settings;
+		settings.client_id = "account-id";
+		settings.tenant = "contoso.onmicrosoft.com";
+		const oauth2::Provider p = oauth2::WithAccountSettings(*microsoft, settings);
+		CHECK(p.client_id == "account-id");
+		CHECK(p.client_secret.empty());
+		CHECK(p.ResolveEndpoint(p.authorization_endpoint) ==
+			"https://login.microsoftonline.com/contoso.onmicrosoft.com/oauth2/v2.0/authorize");
+	}
+}
+
+void TestMerge()
+{
+	oauth2::ProviderConfig config;
+	oauth2::ConfigError error;
+
+	// A user client_id replaces nothing else
+	CHECK(config.LoadTexts("system.json", cSystem, "user.json",
+		R"({"version": 1, "providers": {"example": {"client_id": "abc", "client_secret": "s"}}})", error));
+	const oauth2::Provider* p = config.Find("example");
+	CHECK(p && p->client_id == "abc" && p->client_secret == "s");
+	CHECK(p && p->name == "Example" && p->token_endpoint == "https://auth.example.com/token");
+	CHECK(p && p->hosts.size() == 2 && p->scopes.size() == 2 && p->pkce);
+	CHECK(p && p->sasl == std::vector<std::string>({ "XOAUTH2" }));
+
+	// Objects merge key by key; arrays are replaced whole
+	CHECK(config.LoadTexts("system.json", cSystem, "user.json",
+		R"({"version": 1, "providers": {"example": {"scopes": {"mail": ["m2"]}, "hosts": ["mx.example.com"]}}})",
+		error));
+	p = config.Find("example");
+	CHECK(p && p->scopes.at("mail") == std::vector<std::string>({ "m2" }));
+	CHECK(p && p->scopes.at("calendar") == std::vector<std::string>({ "cal" }));
+	CHECK(p && p->hosts == std::vector<std::string>({ "mx.example.com" }));
+	CHECK(config.FindByHost("mx.example.com") == p);
+	CHECK(!config.FindByHost("imap.example.com"));
+
+	// "enabled": false hides a provider
+	CHECK(config.LoadTexts("system.json", cSystem, "user.json",
+		R"({"version": 1, "providers": {"example": {"enabled": false}}})", error));
+	CHECK(!config.Find("example") && !config.FindByHost("imap.example.com"));
+	CHECK(config.Providers().empty());
+
+	// A complete new provider in the user file, and comments everywhere
+	CHECK(config.LoadTexts("system.json", cSystem, "user.json", R"({
+	  "_comment": "mine",
+	  "version": 1,
+	  "providers": {
+	    "_comment": "x",
+	    "acme": {
+	      "_comment": "y",
+	      "name": "Acme", "hosts": ["imap.acme.test"],
+	      "authorization_endpoint": "https://acme.test:8443/auth?x=1",
+	      "token_endpoint": "https://acme.test/token",
+	      "scopes": {"_comment": "z", "mail": ["imap"]},
+	      "authorization_params": {"_comment": "w", "prompt": "consent"},
+	      "redirect": "http://[::1]/acme"
+	    }
+	  }
+	})", error));
+	CHECK(config.Providers().size() == 2);
+	p = config.FindByHost("imap.acme.test");
+	CHECK(p && p->id == "acme" && p->redirect == "http://[::1]/acme");
+	CHECK(p && p->authorization_params.size() == 1 && p->scopes.size() == 1);
+
+	// An empty user file object is fine; so is no user file
+	CHECK(config.LoadTexts("system.json", cSystem, "user.json", R"({"version": 1})", error));
+	CHECK(config.LoadTexts("system.json", cSystem, "", "", error));
+	CHECK(config.Providers().size() == 1);
+
+	// No system file: unavailable, but the user file is still checked
+	CHECK(config.LoadTexts("", "", "user.json", R"({"version": 1, "providers": {"example": {"client_id": "a"}}})", error));
+	CHECK(!config.SystemFileFound() && config.Providers().empty() && !config.FindByHost("imap.example.com"));
+	CHECK(!config.LoadTexts("", "", "user.json", R"({"version": 1, "x": 1})", error));
+}
+
+void TestConfigErrors()
+{
+	// Syntax errors (nlohmann/json), with hints
+	EXPECT_USER_ERROR("{\n  \"version\": 1,\n}", 3, 1, "remove the comma");
+	EXPECT_USER_ERROR("{\n  \"version\": 1,\n  \"providers\": {\"a\": {\"hosts\": [\"x\",]}}\n}", 3, 37,
+		"remove the comma");
+	EXPECT_USER_ERROR("{\n  // a comment\n  \"version\": 1\n}", 2, 3, "no comments");
+	EXPECT_USER_ERROR("{\n  /* a comment */ \"version\": 1\n}", 2, 3, "no comments");
+	EXPECT_USER_ERROR("{'version': 1}", 1, 2, "double quotes");
+	EXPECT_USER_ERROR("{\"version\": 1", 1, 14, "unexpected end of input");
+	EXPECT_USER_ERROR("", 1, 1, "empty input");
+	EXPECT_USER_ERROR("{\"version\": 1} x", 1, 16, "syntax error");
+	// Columns count characters, not bytes ("x" is the 21st character, the
+	// 23rd byte)
+	EXPECT_USER_ERROR("{\"_comment\": \"\xC3\xA9t\xC3\xA9\", x}", 1, 21, "syntax error");
+
+	// Duplicate keys
+	EXPECT_USER_ERROR("{\"version\": 1,\n \"version\": 1}", 2, 2, "duplicate key \"version\" at the top level");
+	EXPECT_USER_ERROR(
+		"{\"version\": 1, \"providers\": {\"example\": {\n  \"client_id\": \"a\",\n  \"client_id\": \"b\"}}}",
+		3, 3, "duplicate key \"client_id\" in provider \"example\"");
+
+	// Schema errors, at the key or the value
+	EXPECT_USER_ERROR("{\"version\": 1, \"providers\": {\"example\": {\n  \"clientid\": \"a\"}}}", 2, 3,
+		"unknown key \"clientid\" in provider \"example\"");
+	EXPECT_USER_ERROR("{\"version\": 1, \"provider\": {}}", 1, 16, "unknown key \"provider\" at the top level");
+	EXPECT_USER_ERROR("{\"version\": 2}", 1, 13, "\"version\" must be 1");
+	EXPECT_USER_ERROR("{\"version\": \"1\"}", 1, 13, "\"version\" must be 1");
+	EXPECT_USER_ERROR("{\"providers\": {}}", 1, 1, "missing \"version\"");
+	EXPECT_USER_ERROR("[1]", 1, 1, "must contain a JSON object");
+	EXPECT_USER_ERROR("{\"version\": 1, \"providers\": []}", 1, 29, "\"providers\" must be an object");
+	EXPECT_USER_ERROR("{\"version\": 1, \"providers\": {\"Example\": {}}}", 1, 30,
+		"provider identifier \"Example\"");
+	EXPECT_USER_ERROR("{\"version\": 1, \"providers\": {\"example\": {\"pkce\": \"yes\"}}}", 1, 50,
+		"\"pkce\" of provider \"example\" must be true or false");
+	EXPECT_USER_ERROR("{\"version\": 1, \"providers\": {\"example\": {\"client_id\": 12}}}", 1, 55,
+		"must be a string");
+	EXPECT_USER_ERROR("{\"version\": 1, \"providers\": {\"example\": {\"client_id\": \"abc \"}}}", 1, 55,
+		"starts or ends with a space");
+	EXPECT_USER_ERROR("{\"version\": 1, \"providers\": {\"example\": {\"token_endpoint\": \"http://a.test/t\"}}}",
+		1, 60, "must be an https:// URL");
+	EXPECT_USER_ERROR("{\"version\": 1, \"providers\": {\"example\": {\"token_endpoint\": \"https://\"}}}",
+		1, 60, "must be an https:// URL");
+	EXPECT_USER_ERROR("{\"version\": 1, \"providers\": {\"example\": {\"token_endpoint\": \"https://a.test/t t\"}}}",
+		1, 60, "must be an https:// URL");
+	EXPECT_USER_ERROR("{\"version\": 1, \"providers\": {\"example\": {\"redirect\": \"http://127.0.0.1:8080\"}}}",
+		1, 54, "without a port");
+	EXPECT_USER_ERROR("{\"version\": 1, \"providers\": {\"example\": {\"redirect\": \"https://localhost\"}}}",
+		1, 54, "without a port");
+	EXPECT_USER_ERROR("{\"version\": 1, \"providers\": {\"example\": {\"hosts\": [\"IMAP.example.com\"]}}}",
+		1, 52, "lower-case name");
+	EXPECT_USER_ERROR("{\"version\": 1, \"providers\": {\"example\": {\"hosts\": [\"a.test\", \"a.test\"]}}}",
+		1, 62, "listed twice");
+	EXPECT_USER_ERROR("{\"version\": 1, \"providers\": {\"example\": {\"scopes\": {\"notes\": []}}}}", 1, 53,
+		"unknown scope group \"notes\"");
+	EXPECT_USER_ERROR("{\"version\": 1, \"providers\": {\"example\": {\"scopes\": {\"mail\": [\"a b\"]}}}}", 1, 62,
+		"without spaces");
+	EXPECT_USER_ERROR("{\"version\": 1, \"providers\": {\"example\": {\"sasl\": [\"PLAIN\"]}}}", 1, 51,
+		"\"OAUTHBEARER\" or \"XOAUTH2\"");
+	EXPECT_USER_ERROR("{\"version\": 1, \"providers\": {\"example\": {\"sasl\": []}}}", 1, 50, "non-empty list");
+	EXPECT_USER_ERROR(
+		"{\"version\": 1, \"providers\": {\"example\": {\"authorization_params\": {\"scope\": \"x\"}}}}", 1, 67,
+		"set by the application");
+	EXPECT_USER_ERROR("{\"version\": 1, \"providers\": {\"example\": {\"_comment\": 1}}}", 1, 54,
+		"\"_comment\" must be a string");
+	// Several errors: the first in the text is reported, with the count
+	EXPECT_USER_ERROR("{\"version\": 1, \"providers\": {\"example\": {\"a\": 1,\n \"b\": 2}}}", 1, 42,
+		"(and 1 more error)");
+
+	// After merging: missing required key, host listed twice, {tenant}
+	EXPECT_USER_ERROR("{\"version\": 1, \"providers\": {\"acme\": {\"name\": \"Acme\"}}}", 1, 30,
+		"provider \"acme\" lacks the required key \"authorization_endpoint\"");
+	EXPECT_USER_ERROR("{\"version\": 1, \"providers\": {\"acme\": {\"name\": \"Acme\", \"hosts\": [\"imap.example.com\"],"
+		" \"authorization_endpoint\": \"https://a.test/a\", \"token_endpoint\": \"https://a.test/t\","
+		" \"scopes\": {\"mail\": [\"m\"]}, \"redirect\": \"http://localhost\"}}}", 1, 55,
+		"server \"imap.example.com\" is listed by providers \"example\" and \"acme\"");
+	EXPECT_USER_ERROR("{\"version\": 1, \"providers\": {\"example\": {\"token_endpoint\": \"https://a.test/{tenant}/t\"}}}",
+		1, 30, "no \"tenant\"");
+
+	// An error in the system file names the system file
+	ExpectError("{\"version\": 1,\n \"providers\": {\"x\": {\"name\": \"X\"}}}", "{\"version\": 1}", "system.json",
+		2, 16, "lacks the required key", __LINE__);
+	ExpectError("{\"version\": 1,}", "{\"version\": 1}", "system.json", 1, 15, "remove the comma", __LINE__);
+
+	// The message format
+	oauth2::ConfigError error;
+	error.file = "/nonexistent/f.json";
+	error.line = 3;
+	error.column = 7;
+	error.message = "m";
+	CHECK(error.ToString() == "/nonexistent/f.json:3:7: m");
+	error.line = 0;
+	CHECK(error.ToString() == "/nonexistent/f.json: m");
+}
+
+// A temporary folder in obj/tests/ (removed at the end)
+struct TempDir
+{
+	std::string path;
+	std::vector<std::string> files;
+	std::vector<std::string> dirs;
+
+	TempDir()
+	{
+		char name[] = "obj/tests/tmp-XXXXXX";
+		if (mkdtemp(name))
+		{
+			char* real = realpath(name, nullptr);
+			path = real ? real : name;
+			std::free(real);
+		}
+	}
+	~TempDir()
+	{
+		for (auto it = files.rbegin(); it != files.rend(); ++it)
+			unlink(it->c_str());
+		for (auto it = dirs.rbegin(); it != dirs.rend(); ++it)
+		{
+			chmod(it->c_str(), 0700);
+			rmdir(it->c_str());
+		}
+		rmdir(path.c_str());
+	}
+	std::string Dir(const std::string& name, mode_t mode)
+	{
+		const std::string dir = path + "/" + name;
+		mkdir(dir.c_str(), 0700);
+		chmod(dir.c_str(), mode);
+		dirs.push_back(dir);
+		return dir;
+	}
+	std::string File(const std::string& name, const std::string& text, mode_t mode)
+	{
+		const std::string file = path + "/" + name;
+		WriteText(file, text, mode);
+		files.push_back(file);
+		return file;
+	}
+	std::string Link(const std::string& name, const std::string& target)
+	{
+		const std::string link = path + "/" + name;
+		symlink(target.c_str(), link.c_str());
+		files.push_back(link);
+		return link;
+	}
+};
+
+bool HasIssue(const std::vector<oauth2::PermissionIssue>& issues, const std::string& part, bool fixable)
+{
+	for (const oauth2::PermissionIssue& issue : issues)
+	{
+		if (issue.problem.find(part) != std::string::npos && issue.fixable == fixable)
+			return true;
+	}
+	return false;
+}
+
+void TestPermissions()
+{
+	TempDir tmp;
+	CHECK(!tmp.path.empty());
+	if (tmp.path.empty())
+		return;
+
+	oauth2::PermissionContext context;
+	context.home = tmp.Dir("home", 0700);
+	tmp.Dir("home/.config", 0700);
+	const std::string folder = tmp.Dir("home/.config/app", 0700);
+	const std::string file = tmp.File("home/.config/app/oauth2-providers.conf.json", "{}", 0600);
+	const std::string missing = folder + "/missing.json";
+
+	// Correct files: nothing; a missing file: nothing
+	CHECK(oauth2::CheckPermissions(file, oauth2::FileRole::User, context).empty());
+	CHECK(oauth2::CheckPermissions(missing, oauth2::FileRole::User, context).empty());
+	std::string error;
+	CHECK(oauth2::FixPermissions(missing, error, context));
+	chmod(file.c_str(), 0400);
+	CHECK(oauth2::CheckPermissions(file, oauth2::FileRole::User, context).empty());
+
+	// 0644 and 0666: a fixable warning; the fix restores 0600
+	for (mode_t mode : { mode_t(0644), mode_t(0666), mode_t(0604) })
+	{
+		chmod(file.c_str(), mode);
+		const std::vector<oauth2::PermissionIssue> issues =
+			oauth2::CheckPermissions(file, oauth2::FileRole::User, context);
+		CHECK(issues.size() == 1 && HasIssue(issues, "readable or writable by group or others", true));
+		CHECK(issues.size() == 1 && issues[0].advice.find("chmod 600") != std::string::npos);
+		CHECK(oauth2::FixPermissions(file, error, context));
+		CHECK(Mode(file) == 0600);
+		CHECK(oauth2::CheckPermissions(file, oauth2::FileRole::User, context).empty());
+	}
+
+	// A group-writable folder: fixable; the fix makes it 0700
+	chmod(folder.c_str(), 0775);
+	std::vector<oauth2::PermissionIssue> issues = oauth2::CheckPermissions(file, oauth2::FileRole::User, context);
+	CHECK(issues.size() == 1 && HasIssue(issues, "folder writable by group or others", true));
+	CHECK(oauth2::FixPermissions(file, error, context));
+	CHECK(Mode(folder) == 0700);
+	CHECK(oauth2::CheckPermissions(file, oauth2::FileRole::User, context).empty());
+
+	// A foreign owner (simulated): warned, not fixable, the fix refuses
+	oauth2::PermissionContext foreign = context;
+	foreign.user = getuid() + 1;
+	chmod(file.c_str(), 0644);
+	issues = oauth2::CheckPermissions(file, oauth2::FileRole::User, foreign);
+	CHECK(HasIssue(issues, "not owned by you", false));
+	CHECK(HasIssue(issues, "readable or writable by group or others", false));
+	error.clear();
+	CHECK(!oauth2::FixPermissions(file, error, foreign) && error.find("another user") != std::string::npos);
+	CHECK(Mode(file) == 0644);
+	CHECK(oauth2::FixPermissions(file, error, context) && Mode(file) == 0600);
+
+	// A symbolic link to a file outside the home folder: warned, not fixed
+	const std::string outside = tmp.File("outside.json", "{}", 0600);
+	const std::string link = tmp.Link("home/.config/app/linked.json", outside);
+	issues = oauth2::CheckPermissions(link, oauth2::FileRole::User, context);
+	CHECK(issues.size() == 1 && HasIssue(issues, "symbolic link pointing outside your home folder", false));
+	error.clear();
+	CHECK(!oauth2::FixPermissions(link, error, context) && error.find("symbolic link") != std::string::npos);
+	// A link inside the home folder is accepted
+	const std::string inside = tmp.File("home/inside.json", "{}", 0600);
+	const std::string link2 = tmp.Link("home/.config/app/linked2.json", inside);
+	CHECK(oauth2::CheckPermissions(link2, oauth2::FileRole::User, context).empty());
+
+	// The system file: root-owned (simulated) and 0644 is correct
+	oauth2::PermissionContext system = context;
+	system.system_owner = getuid();
+	const std::string sysFolder = tmp.Dir("etc", 0755);
+	const std::string sysFile = tmp.File("etc/oauth2-providers.conf.json", "{}", 0644);
+	CHECK(oauth2::CheckPermissions(sysFile, oauth2::FileRole::System, system).empty());
+	// Root-owned but group-writable: warned, never fixable
+	chmod(sysFile.c_str(), 0664);
+	issues = oauth2::CheckPermissions(sysFile, oauth2::FileRole::System, system);
+	CHECK(issues.size() == 1 && HasIssue(issues, "writable by group or others", false));
+	CHECK(issues.size() == 1 && issues[0].advice.find("as root") != std::string::npos);
+	chmod(sysFile.c_str(), 0644);
+	chmod(sysFolder.c_str(), 0775);
+	issues = oauth2::CheckPermissions(sysFile, oauth2::FileRole::System, system);
+	CHECK(issues.size() == 1 && HasIssue(issues, "folder writable by group or others", false));
+	chmod(sysFolder.c_str(), 0755);
+	// Not owned by root
+	system.system_owner = getuid() + 1;
+	issues = oauth2::CheckPermissions(sysFile, oauth2::FileRole::System, system);
+	CHECK(issues.size() == 1 && HasIssue(issues, "not owned by root", false));
+
+	// Warnings never stop loading: a 0666 user file still loads
+	const std::string userFile = tmp.File("home/.config/app/user.json",
+		"{\"version\": 1, \"providers\": {\"google\": {\"client_id\": \"id-from-user\"}}}", 0666);
+	CHECK(!oauth2::CheckPermissions(userFile, oauth2::FileRole::User, context).empty());
+	oauth2::ConfigFiles files;
+	files.system_file = cShippedFile;
+	files.user_file = userFile;
+	oauth2::ProviderConfig config;
+	oauth2::ConfigError configError;
+	CHECK(config.Load(files, configError));
+	CHECK(config.Find("google") && config.Find("google")->client_id == "id-from-user");
+
+	// Missing user file: fine; unreadable or not a file: an error
+	files.user_file = missing;
+	CHECK(config.Load(files, configError) && config.SystemFileFound());
+	files.system_file = folder + "/no-system.json";
+	CHECK(config.Load(files, configError) && !config.SystemFileFound());
+	files.system_file = cShippedFile;
+	files.user_file = folder;
+	CHECK(!config.Load(files, configError) && configError.message == "not a regular file");
+	if (getuid() != 0)
+	{
+		chmod(userFile.c_str(), 0);
+		files.user_file = userFile;
+		CHECK(!config.Load(files, configError) && configError.line == 0 &&
+			configError.file == userFile);
+		chmod(userFile.c_str(), 0600);
+	}
+}
+
+void TestPaths()
+{
+	oauth2::Identity identity;
+	identity.id = "my-mail.2";
+	CHECK(oauth2::EnvironmentPrefix(identity) == "MY_MAIL_2");
+	identity.id = "mulberry";
+	CHECK(oauth2::EnvironmentPrefix(identity) == "MULBERRY");
+	CHECK(oauth2::SystemConfigVariable(identity) == "MULBERRY_OAUTH2_SYSTEM_CONFIG");
+
+	const char* oldXdg = std::getenv("XDG_CONFIG_HOME");
+	const std::string savedXdg = oldXdg ? oldXdg : "";
+	const char* oldSystem = std::getenv("MULBERRY_OAUTH2_SYSTEM_CONFIG");
+	const std::string savedSystem = oldSystem ? oldSystem : "";
+
+	setenv("XDG_CONFIG_HOME", "/xdg/config", 1);
+	unsetenv("MULBERRY_OAUTH2_SYSTEM_CONFIG");
+	oauth2::ConfigFiles files = oauth2::DefaultConfigFiles(identity, "/usr/local/etc");
+	CHECK(files.user_file == "/xdg/config/mulberry/oauth2-providers.conf.json");
+	CHECK(files.system_file == "/usr/local/etc/mulberry/oauth2-providers.conf.json");
+	CHECK(!files.system_file_explicit);
+
+	// A relative XDG_CONFIG_HOME is ignored, as the specification says
+	setenv("XDG_CONFIG_HOME", "relative", 1);
+	files = oauth2::DefaultConfigFiles(identity, "/etc");
+	CHECK(files.user_file == oauth2::HomeDirectory() + "/.config/mulberry/oauth2-providers.conf.json");
+	CHECK(files.system_file == "/etc/mulberry/oauth2-providers.conf.json");
+
+	setenv("MULBERRY_OAUTH2_SYSTEM_CONFIG", "/build/tree/data.json", 1);
+	files = oauth2::DefaultConfigFiles(identity, "/etc");
+	CHECK(files.system_file == "/build/tree/data.json" && files.system_file_explicit);
+
+	if (oldXdg)
+		setenv("XDG_CONFIG_HOME", savedXdg.c_str(), 1);
+	else
+		unsetenv("XDG_CONFIG_HOME");
+	if (oldSystem)
+		setenv("MULBERRY_OAUTH2_SYSTEM_CONFIG", savedSystem.c_str(), 1);
+	else
+		unsetenv("MULBERRY_OAUTH2_SYSTEM_CONFIG");
+
+	const std::string home = oauth2::HomeDirectory();
+	CHECK(!home.empty());
+	CHECK(oauth2::DisplayPath(home + "/.config/x") == "~/.config/x");
+	CHECK(oauth2::DisplayPath(home + "x/y") == home + "x/y");
+	CHECK(oauth2::DisplayPath("/etc/x") == "/etc/x");
+}
+
 } // namespace
 
 int main()
@@ -303,6 +840,11 @@ int main()
 	TestRandom();
 	TestRedact();
 	TestJson();
+	TestShippedFile();
+	TestMerge();
+	TestConfigErrors();
+	TestPermissions();
+	TestPaths();
 
 	if (sFailures != 0)
 	{

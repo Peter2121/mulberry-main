@@ -643,6 +643,13 @@ AC_SUBST(HTMLVIEW_TOOL_LIBS)
 # ---------------------------------------------------------------------------
 
 test "$prefix" = "NONE" -o "$prefix" = "" && prefix='~'
+
+# Folder of the system OAuth2 provider file: ${sysconfdir}/<app id>/
+# (OAUTH2-PLAN.md, section 7); sysconfdir is "${prefix}/etc" unless given
+OAUTH2_SYSCONFDIR=`eval echo "$sysconfdir"`
+AC_SUBST(OAUTH2_SYSCONFDIR)
+echo "OAuth2 system provider file: $OAUTH2_SYSCONFDIR/$APP_ID/oauth2-providers.conf.json"
+
 echo ""
 echo "Mulberry binary goes to $DESTDIR$prefix/$PROGRAM_DIR"
 echo "Mulberry resources and plugins go to $DESTDIR$prefix/$MULBERRY_DIR"

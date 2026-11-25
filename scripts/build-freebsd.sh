@@ -262,6 +262,12 @@ do_install() {
 	bindir=${bindir%/}
 	libdir=${libdir%/}
 	helpdir=${helpdir%/}
+	# Folder of the OAuth2 system provider file: <sysconfdir>/<app id>
+	confdir=$(sed -n 's/^SYSCONFDIR = //p' Libraries/OAuth2/Makefile)/$(sed -n 's/^APP_ID = //p' Libraries/OAuth2/Makefile)
+	case $confdir in
+	/*/*) ;;
+	*) die "cannot read the OAuth2 configuration folder from Libraries/OAuth2/Makefile ($confdir)" ;;
+	esac
 
 	# The layout is the one configured by "build"; -s/-u only double-check
 	if [ "$prefix" = /usr/local ]; then
@@ -281,7 +287,7 @@ do_install() {
 		if [ "$(id -u)" -eq 0 ] && [ "$owner" != root ]; then
 			die "this build is configured for a per-user installation in $prefix (owned by $owner): run '$0 install' as $owner, without doas/sudo"
 		fi
-		check_writable install "$bindir" "$libdir" "$helpdir"
+		check_writable install "$bindir" "$libdir" "$helpdir" "$confdir"
 	fi
 
 	# List the installed files by installing into a temporary directory
@@ -300,6 +306,7 @@ do_install() {
 		echo "bindir $bindir"
 		echo "libdir $libdir"
 		echo "helpdir $helpdir"
+		echo "confdir $confdir"
 		(cd "$tmp" && find . ! -type d) | sed 's|^\.||; s|^|file |' | sort
 	} > "$manifest"
 
@@ -331,7 +338,7 @@ check_writable() {
 # The parts are installed directly: the top-level "install" target depends
 # on "all", which would regenerate files in the tree as root.
 run_install() {
-	for d in Linux Plug-ins Build Sources_Common; do
+	for d in Linux Plug-ins Build Sources_Common Libraries/OAuth2; do
 		$MAKE_CMD -C "$d" SKIPJX=yes DESTDIR="$1" install
 	done
 }
@@ -374,6 +381,10 @@ do_uninstall() {
 	m_bindir=$(sed -n 's/^bindir //p' "$manifest")
 	m_libdir=$(sed -n 's/^libdir //p' "$manifest")
 	m_helpdir=$(sed -n 's/^helpdir //p' "$manifest")
+	# The OAuth2 system provider file; manifests written before it existed
+	# have no "confdir" line, and then nothing matches m_conffile
+	m_confdir=$(sed -n 's/^confdir //p' "$manifest")
+	m_conffile=
 	[ "$m_libdir" = "$libdir" ] ||
 		die "$manifest is for $m_libdir, not $libdir"
 	for d in "$m_bindir" "$m_helpdir"; do
@@ -382,13 +393,19 @@ do_uninstall() {
 		*) die "invalid directory '$d' in $manifest" ;;
 		esac
 	done
+	case $m_confdir in
+	"") ;;
+	*/../*|*/..) die "invalid directory '$m_confdir' in $manifest" ;;
+	/*/*) m_conffile=$m_confdir/oauth2-providers.conf.json ;;
+	*) die "invalid directory '$m_confdir' in $manifest" ;;
+	esac
 	if [ -z "$STAGE_DIR" ] && [ "$(id -u)" -eq 0 ]; then
 		owner=$(stat -f %Su "$m_libdir")
 		[ "$owner" = root ] ||
 			die "$m_libdir is a per-user installation (owned by $owner): run '$0 uninstall' as $owner, without doas/sudo"
 	fi
 	check_writable uninstall "${STAGE_DIR}$m_bindir" "${STAGE_DIR}$m_libdir" \
-		"${STAGE_DIR}$m_helpdir"
+		"${STAGE_DIR}$m_helpdir" ${m_confdir:+"${STAGE_DIR}$m_confdir"}
 
 	# Directories holding installed files (up to the Mulberry library and
 	# help directories), deepest first; they are removed only if empty.
@@ -414,6 +431,9 @@ do_uninstall() {
 			;;
 		"$m_bindir"/mulberry|"$m_libdir"/*|"$m_helpdir"/*)
 			;;
+		"$m_conffile")
+			[ -n "$m_conffile" ] || continue
+			;;
 		*)
 			note "skipping $path (outside the Mulberry directories)"
 			continue
@@ -429,6 +449,10 @@ do_uninstall() {
 	printf '%s\n' "$dirs" | while IFS= read -r d; do
 		[ -n "$d" ] && rmdir -- "${STAGE_DIR}$d" 2>/dev/null || true
 	done
+	# The OAuth2 configuration folder, if empty now
+	if [ -n "$m_confdir" ]; then
+		rmdir -- "${STAGE_DIR}$m_confdir" 2>/dev/null || true
+	fi
 
 	note "removed $removed files"
 	for d in "$m_libdir" "$m_helpdir"; do
