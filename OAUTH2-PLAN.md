@@ -61,9 +61,25 @@ provider requires or offers it.
 | Code | Account | Registration | Account-side preparation |
 |---|---|---|---|
 | **G** | Google, personal (Gmail) | Own Google Cloud project in **Personal mode**, Desktop client (`docs/oauth2/register-google.md`) | Nothing for IMAP (always on since 2025); POP enabled for the POP test; a test calendar and test contacts |
-| **MP** | Microsoft, personal (Outlook.com) | The Mulberry test app, "any Entra ID tenant + personal Microsoft accounts" (`docs/oauth2/register-microsoft.md`). A personal account alone can no longer register apps: the app lives in the work tenant or in the free directory of an Azure free account | **IMAP and POP are off by default** on Outlook.com: turn them on in Settings → Mail → Forwarding and IMAP |
-| **MW** | Microsoft 365, work | The same app registration | IMAP, POP and authenticated SMTP enabled for the mailbox (admin). **Admin consent is probably needed**: the default managed consent policy forbids users to consent to `IMAP.AccessAsUser.All` and `POP.AccessAsUser.All` |
-| **Y** | Yahoo, personal, free | Yahoo app; mail scopes only after Yahoo approves (`docs/oauth2/register-yahoo.md`). The account works with OAuth2 in Thunderbird only because Mozilla is an approved Yahoo partner, with its own client ID and a redirect Yahoo set for it; Mulberry may not reuse them | App password for the regression tests |
+| **MP** | Microsoft, personal (Outlook.com) | The Mulberry test app, "any Entra ID tenant + personal Microsoft accounts" (`docs/oauth2/register-microsoft.md`). A personal account alone can no longer register apps: the app lives in the Default Directory of an Azure free account opened with the personal Microsoft account (chosen 2026-11-25) | **IMAP and POP are off by default** on Outlook.com: turn them on in Settings → Mail → Forwarding and IMAP |
+| **MW** (later) | Microsoft 365, work | The same app registration, which lives outside the work tenant | IMAP, POP and authenticated SMTP enabled for the mailbox (admin). **Admin consent is probably needed**: the default managed consent policy forbids users to consent to `IMAP.AccessAsUser.All` and `POP.AccessAsUser.All`. As the app is not in the work tenant, the admin grants it through the admin-consent URL of the guide, not the portal button |
+| **Y** (later) | Yahoo, personal, free | Yahoo app; mail scopes only after Yahoo approves (`docs/oauth2/register-yahoo.md`). The account works with OAuth2 in Thunderbird only because Mozilla is an approved Yahoo partner, with its own client ID and a redirect Yahoo set for it; Mulberry may not reuse them | App password for the regression tests |
+
+**MW and Y later (decided 2026-11-25).** The work account waits for the
+admin consent and the mailbox settings (task 0.3); Yahoo is configured later
+(task 0.4). Until then:
+
+- the work starts with **G and MP only**;
+- a task is done when its checks with G and MP pass. Its MW and Y checks
+  are marked "later" in section 8 and run as a catch-up once the account is
+  ready, at the latest before stage 9;
+- the MW catch-up covers the tasks whose live checks name MW: 1.6–1.8, 3.4,
+  4.1–4.5, 6.1, 6.4 and 2.8 (safe mode with a disconnected copy, which can use MP
+  meanwhile);
+- the Y catch-up covers the regression with an app password (0.4, 0.5) and
+  stage 7;
+- the regression rule of section 3 ("every existing account works exactly as
+  before") is checked meanwhile with the developer's existing accounts.
 
 Expected coverage (✓ testable, — not offered by the provider, ? depends on
 approval or settings):
@@ -148,10 +164,10 @@ ManageSieve with OAuth2 has no test server among these accounts (task 4.6).
 | # | Task | Check | Size |
 |---|---|---|---|
 | 0.1 | **Google:**<br>• a **Personal-mode** project (only the creator's account can sign in; no warning screen, no 100-user cap, no 7-day expiry; the choice is permanent);<br>• client of type **Desktop app**; its secret is shown only once;<br>• Gmail, CalDAV and CardDAV/People APIs enabled;<br>• scopes `https://mail.google.com/`, `…/auth/calendar`, `…/auth/carddav` declared.<br>An External project in Testing is created only for task 4.3 (`docs/oauth2/register-google.md`) | client ID and secret saved in the user provider file (section 7) | S |
-| 0.2 | **Microsoft:**<br>• directory: **the work tenant** (decided 2026-11-25; the admin approves as was done for Thunderbird); an Azure free account only if the work tenant refuses;<br>• one registration for "any Entra ID tenant + personal Microsoft accounts", a public client without a secret;<br>• redirect `http://localhost`; `http://127.0.0.1` tried through the manifest;<br>• public client flows on;<br>• delegated permissions `IMAP.AccessAsUser.All`, `POP.AccessAsUser.All`, `SMTP.Send`, `offline_access`, `openid`, `email`, `profile` (`docs/oauth2/register-microsoft.md`) | application (client) ID saved in the user provider file; whether `127.0.0.1` was accepted recorded (decision D5) | S |
-| 0.3 | **Accounts:**<br>• MP: IMAP and POP turned on in Outlook.com's settings;<br>• MW: IMAP, POP and authenticated SMTP enabled for the mailbox, and admin consent granted (portal button or admin-consent URL from the guide) unless the tenant allows user consent | answers recorded in section 8 | S (depends on the admin) |
-| 0.4 | Yahoo: app created; mail access requested through Yahoo's form; app password generated for Y (`docs/oauth2/register-yahoo.md`) | request sent (answer may take long or never come); app password works with today's Mulberry (baseline) | S |
-| 0.5 | Baseline: each server's advertised mechanisms recorded (`openssl s_client`, `CAPABILITY`, `EHLO`, `CAPA`) for Gmail, Outlook.com, Office 365, Yahoo; today's Mulberry tested with Y's app password (IMAP, SMTP, POP), "Save password" left unticked | the table "Baseline mechanisms" in section 8, used to check later stages | S |
+| 0.2 | **Microsoft:**<br>• directory: **the Default Directory of an Azure free account** opened with the personal Microsoft account (decided 2026-11-25, done the same day: faster than an approval in the work tenant, which can take several days); the work tenant stays possible later;<br>• one registration for "any Entra ID tenant + personal Microsoft accounts", a public client without a secret;<br>• redirect `http://localhost`; `http://127.0.0.1` tried through the manifest;<br>• public client flows on;<br>• delegated permissions `IMAP.AccessAsUser.All`, `POP.AccessAsUser.All`, `SMTP.Send`, `offline_access`, `openid`, `email`, `profile` (`docs/oauth2/register-microsoft.md`) | application (client) ID saved in the user provider file; whether `127.0.0.1` was accepted recorded (decision D5) | S |
+| 0.3 | **Accounts:**<br>• MP: IMAP and POP turned on in Outlook.com's settings;<br>• MW (**later**, section 2): IMAP, POP and authenticated SMTP enabled for the mailbox, and admin consent granted (through the admin-consent URL from the guide, since the app is not registered in the work tenant) unless the tenant allows user consent | answers recorded in section 8 | S (depends on the admin) |
+| 0.4 | Yahoo (**later**, section 2): app created; mail access requested through Yahoo's form; app password generated for Y (`docs/oauth2/register-yahoo.md`) | request sent (answer may take long or never come); app password works with today's Mulberry (baseline) | S |
+| 0.5 | Baseline: each server's advertised mechanisms recorded (`openssl s_client`, `CAPABILITY`, `EHLO`, `CAPA`) for Gmail, Outlook.com, Office 365, Yahoo (the servers answer before login, so no account is needed and this part is done now); today's Mulberry tested with Y's app password (IMAP, SMTP, POP), "Save password" left unticked (**later**, with Y) | the table "Baseline mechanisms" in section 8, used to check later stages | S |
 | 0.6 | Decisions D1–D6 (section 6) taken | marked "Decided" | — |
 
 ### Stage 1: the core and its test tool (Mulberry unchanged)
@@ -470,20 +486,20 @@ Filled in at stage 0 (tasks 0.1–0.4), following the guides in `docs/oauth2/`.
 
 | Item | Value | Date |
 |---|---|---|
-| G: Google project name | | |
-| G: audience (Personal mode or External) | | |
-| G: APIs enabled; billing asked for (yes/no) | | |
-| G: `…/auth/carddav` scope accepted, or `…/auth/contacts` used | | |
+| G: Google project name | mulberry-test-oauth | 25/11/2026 |
+| G: audience (Personal mode or External) | Personal | 25/11/2026 |
+| G: APIs enabled; billing asked for (yes/no) | Gmail, CalDAV, CardDAV enabled; billing: no | 25/11/2026 |
+| G: `…/auth/carddav` scope accepted, or `…/auth/contacts` used | `/auth/carddav` | 25/11/2026 |
 | G: second project for task 4.3 (External, Testing), if created | | |
-| Microsoft: directory where the app is registered | | |
-| Microsoft: manifest accepted `http://127.0.0.1` (yes/no) | | |
-| MP: IMAP and POP turned on in Outlook.com | | |
-| MW: consent state (user consent, admin consent granted, request pending) | | |
-| MW: mailbox settings (IMAP, POP, Authenticated SMTP) | | |
-| MW: SMTP AUTH blocked tenant-wide or by security defaults (yes/no) | | |
-| Y: app password created | | |
-| Y: Yahoo app created; redirect form accepted | | |
-| Y: mail access request sent; Yahoo's answer | | |
+| Microsoft: directory where the app is registered | Azure free | 25/11/2026 |
+| Microsoft: manifest accepted `http://127.0.0.1` (yes/no) | yes | 25/11/2026 |
+| MP: IMAP and POP turned on in Outlook.com | yes | 25/11/2026 |
+| MW: consent state (user consent, admin consent granted, request pending) | later | 25/11/2026 |
+| MW: mailbox settings (IMAP, POP, Authenticated SMTP) | later | 25/11/2026 |
+| MW: SMTP AUTH blocked tenant-wide or by security defaults (yes/no) | later | 25/11/2026 |
+| Y: app password created | later | 25/11/2026 |
+| Y: Yahoo app created; redirect form accepted | later | 25/11/2026 |
+| Y: mail access request sent; Yahoo's answer | later | 25/11/2026 |
 
 ### Baseline mechanisms
 
@@ -492,10 +508,25 @@ Filled in at task 0.5: what each server advertises before any OAuth2 code
 
 | Server | IMAP `AUTH=` | SMTP `AUTH` | POP3 `SASL` | Date |
 |---|---|---|---|---|
-| Gmail | | | | |
-| Outlook.com | | | | |
-| Office 365 | | | | |
-| Yahoo | | | | |
+| Gmail (`imap.gmail.com:993`, `smtp.gmail.com:587` and `465`, `pop.gmail.com:995`) | XOAUTH2, PLAIN, PLAIN-CLIENTTOKEN, OAUTHBEARER; SASL-IR | LOGIN, PLAIN, XOAUTH2, PLAIN-CLIENTTOKEN, OAUTHBEARER, XOAUTH (same on 587 and 465) | PLAIN, XOAUTH2, OAUTHBEARER; `USER` also | 25/11/2026 |
+| Outlook.com (`outlook.office365.com:993`/`995`, `smtp-mail.outlook.com:587`) | **XOAUTH2 only**; `LOGINDISABLED`; SASL-IR | LOGIN, XOAUTH2 | **XOAUTH2 only**; no `USER` | 25/11/2026 |
+| Office 365 (`outlook.office365.com:993`/`995`, `smtp.office365.com:587`) | as Outlook.com (same IMAP and POP servers) | LOGIN, XOAUTH2 | as Outlook.com | 25/11/2026 |
+| Yahoo (`imap.mail.yahoo.com:993`, `smtp.mail.yahoo.com:587` and `465`, `pop.mail.yahoo.com:995`) | PLAIN, XOAUTH2, OAUTHBEARER; SASL-IR | PLAIN, LOGIN, XOAUTH2, OAUTHBEARER (same on 587 and 465) | PLAIN, XOAUTH2 (no OAUTHBEARER); `USER` also | 25/11/2026 |
+
+What this shows:
+
+- **Microsoft IMAP and POP already refuse passwords** before login:
+  `LOGINDISABLED` and only `AUTH=XOAUTH2` on IMAP, only `SASL XOAUTH2` and
+  no `USER` on POP. Today's Mulberry cannot read MP or MW mail at all;
+  OAuth2 (stage 4) is the only way. Microsoft SMTP still lists `LOGIN`, until
+  Basic authentication for SMTP AUTH is disabled by default at the end of
+  December 2026.
+- **No Microsoft server offers OAUTHBEARER**: XOAUTH2 is the mechanism for
+  MP and MW everywhere (tasks 4.1, 4.4, 4.5).
+- **Gmail offers OAUTHBEARER on IMAP, SMTP and POP**, so task 4.2 can test
+  it on all three; Yahoo offers it on IMAP and SMTP but not on POP.
+- Gmail SMTP also lists the old `XOAUTH` (OAuth 1.0) mechanism; Mulberry
+  ignores it.
 
 ### Test results
 

@@ -122,8 +122,9 @@ Yahoo](https://developer.yahoo.com/sign-in-with-yahoo/),
   PKCE S256; access tokens last 1 hour; refresh tokens last long and may
   rotate.
 - **Scopes:** `openid email` now; `mail-r` or `mail-w` only after approval.
-- **SASL:** Yahoo's servers accept XOAUTH2 and OAUTHBEARER (checked on
-  2026-11-24).
+- **SASL:** Yahoo's IMAP and SMTP servers accept XOAUTH2 and OAUTHBEARER;
+  its POP server accepts XOAUTH2 only (checked on 2026-11-24, POP on
+  2026-11-25; see the plan's section 8, "Baseline mechanisms").
 
 ## C. Request mail access (commercial access form)
 

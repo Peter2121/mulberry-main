@@ -45,8 +45,8 @@ GitHub reports, no Learn page). Choose one:
 
 | Option | Conditions | Remarks |
 |---|---|---|
-| **A. The work tenant** (chosen for the tests, 2026-11-25) | Allowed if "Users can register applications" is on (the default), or if an admin gives you the **Application Developer** role or creates the app for you ([delegate app roles](https://learn.microsoft.com/en-us/entra/identity/role-based-access-control/delegate-app-roles)) | Simplest if allowed. The app belongs to your employer's tenant, so ask first. Error if forbidden: "You don't have permission to register applications in the … directory" |
-| **B. Azure free account** with the personal Microsoft account | Phone, a credit or debit card (a small temporary hold; prepaid cards refused), a Microsoft account ([Azure free account](https://azure.microsoft.com/en-us/pricing/purchase-options/azure-account)) | Creates a **Default Directory** where apps can be registered. The $200 credit ends after 30 days and the paid services stop, but the Entra directory itself is free and the registration keeps working (**unverified**) |
+| A. The work tenant | Allowed if "Users can register applications" is on (the default), or if an admin gives you the **Application Developer** role or creates the app for you ([delegate app roles](https://learn.microsoft.com/en-us/entra/identity/role-based-access-control/delegate-app-roles)) | Simplest if allowed. The app belongs to your employer's tenant, so ask first. Error if forbidden: "You don't have permission to register applications in the … directory" |
+| **B. Azure free account** with the personal Microsoft account (chosen for the tests, 2026-11-25: done in a day, while an approval in the work tenant can take several days) | Phone, a credit or debit card (a small temporary hold; prepaid cards refused), a Microsoft account ([Azure free account](https://azure.microsoft.com/en-us/pricing/purchase-options/azure-account)) | Creates a **Default Directory** where apps can be registered. The $200 credit ends after 30 days and the paid services stop, but the Entra directory itself is free and the registration keeps working (**unverified**) |
 | C. Microsoft 365 Developer Program sandbox | Visual Studio Professional/Enterprise subscribers, some partner programmes and support customers only ([FAQ](https://learn.microsoft.com/en-us/office/developer-program/microsoft-365-developer-program-faq)) | Not available to a plain developer |
 
 Whichever directory you use, the registration below accepts **both** account
@@ -157,9 +157,12 @@ An administrator of the work tenant grants consent once, in one of two ways:
 
 1. **Through the portal.** This works only if the app is registered in the
    work tenant (option A): App → **API permissions → Grant admin consent for
-   <tenant> → Yes**.
+   <tenant> → Yes**. Not possible for the tests, whose app is in the Azure
+   free directory (option B).
 2. **Through the admin-consent URL.** This works for an app registered
-   anywhere:
+   anywhere, and is the way for the tests. Send the URL to the administrator
+   with your work tenant ID (or domain) and the application (client) ID filled
+   in:
    ```
    https://login.microsoftonline.com/<work tenant ID or domain>/v2.0/adminconsent
        ?client_id=<Application (client) ID>
