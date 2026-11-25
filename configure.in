@@ -466,6 +466,67 @@ AC_CHECK_HEADER([uninorm.h], [],
 LDFLAGS="$LDFLAGS -lunistring"
 
 # ---------------------------------------------------------------------------
+# Application identity (OAUTH2-PLAN.md, section 3, "No hard-coded product
+# name"): one short lowercase identifier, used for the configuration folders
+# (${sysconfdir}/<id>/ and ~/.config/<id>/), the prefix of keyring entries
+# and of environment variables.  The display name is derived from it.  A
+# fork changes it here, with --with-app-id.
+# ---------------------------------------------------------------------------
+
+APP_ID="mulberry"
+AC_ARG_WITH(app-id,
+    [  --with-app-id=ID        application identifier for configuration folders and keyring entries (default: mulberry)],
+    APP_ID="$withval")
+case "$APP_ID" in
+  ""|*[[!a-z0-9._-]]*|[[!a-z0-9]]*)
+    AC_MSG_ERROR([--with-app-id: "$APP_ID" must start with a lowercase letter or a digit and contain only a-z, 0-9, '.', '_' and '-'])
+    ;;
+esac
+APP_NAME=`echo "$APP_ID" | awk '{ print toupper(substr($0, 1, 1)) substr($0, 2) }'`
+echo "application identity: $APP_ID ($APP_NAME)"
+AC_SUBST(APP_ID)
+AC_SUBST(APP_NAME)
+
+# ---------------------------------------------------------------------------
+# libcurl (required): HTTP for OAuth2 (Libraries/OAuth2) and the HTML
+# viewer's remote images
+# ---------------------------------------------------------------------------
+
+AC_PATH_PROG(PKG_CONFIG, pkg-config)
+if test -z "$PKG_CONFIG"; then
+    AC_MSG_ERROR([pkg-config not found: it is needed to find libcurl])
+fi
+AC_MSG_CHECKING([for libcurl])
+if $PKG_CONFIG --exists libcurl; then
+    CURL_CFLAGS=`$PKG_CONFIG --cflags libcurl`
+    CURL_LIBS=`$PKG_CONFIG --libs libcurl`
+    CURL_VERSION=`$PKG_CONFIG --modversion libcurl`
+    AC_MSG_RESULT([yes ($CURL_VERSION)])
+else
+    AC_MSG_RESULT([no])
+    AC_MSG_ERROR([libcurl not found: it is needed for OAuth2 and the HTML viewer (install curl, or libcurl4-openssl-dev on Debian)])
+fi
+AC_SUBST(CURL_CFLAGS)
+AC_SUBST(CURL_LIBS)
+
+# ---------------------------------------------------------------------------
+# OAuth2 core (Libraries/OAuth2, OAUTH2-PLAN.md): a static library without
+# JX or Mulberry dependencies, and its test tool oauth2-tool.  Always built;
+# Mulberry links it from task 2.2 on (OAUTH2_CPPFLAGS, OAUTH2_LIBS).
+# ---------------------------------------------------------------------------
+
+OAUTH2_CPPFLAGS="-I`pwd`/Libraries/OAuth2/include"
+OAUTH2_LIBS="`pwd`/Libraries/OAuth2/libOAuth2.a $CURL_LIBS"
+# Test tools: the GCC run-time directory as rpath (see above)
+OAUTH2_TOOL_LIBS=""
+if test -n "$GCC_RUNTIME_DIR"; then
+    OAUTH2_TOOL_LIBS="-Wl,-rpath,$GCC_RUNTIME_DIR"
+fi
+AC_SUBST(OAUTH2_CPPFLAGS)
+AC_SUBST(OAUTH2_LIBS)
+AC_SUBST(OAUTH2_TOOL_LIBS)
+
+# ---------------------------------------------------------------------------
 # HTML message viewer: litehtml with Cairo and HarfBuzz (stack S1 in
 # LITEHTML-VIEWER-PLAN.md).  pixman, Cairo, HarfBuzz and litehtml come from
 # git submodules and are built as static libraries in Libraries/htmldeps
@@ -488,9 +549,8 @@ if test "$enable_html_viewer" != "no"; then
     AC_PATH_PROG(MESON, meson)
     AC_PATH_PROG(NINJA, ninja)
     AC_PATH_PROG(CMAKE, cmake)
-    AC_PATH_PROG(PKG_CONFIG, pkg-config)
-    if test -z "$MESON" || test -z "$NINJA" || test -z "$CMAKE" || test -z "$PKG_CONFIG"; then
-        AC_MSG_ERROR([meson, ninja, cmake and pkg-config are needed to build the HTML viewer (or configure with --disable-html-viewer)])
+    if test -z "$MESON" || test -z "$NINJA" || test -z "$CMAKE"; then
+        AC_MSG_ERROR([meson, ninja and cmake are needed to build the HTML viewer (or configure with --disable-html-viewer)])
     fi
 
     for sub in litehtml/CMakeLists.txt pixman/meson.build cairo/meson.build harfbuzz/meson.build; do
@@ -525,16 +585,9 @@ if test "$enable_html_viewer" != "no"; then
         AC_MSG_ERROR([gif_lib.h (giflib) not found: it is needed by the HTML viewer (or configure with --disable-html-viewer)]))
     AC_CHECK_LIB(gif, DGifOpen, [HTMLVIEW_SYS_LIBS="$HTMLVIEW_SYS_LIBS -lgif"],
         AC_MSG_ERROR([libgif (giflib) not found: it is needed by the HTML viewer (or configure with --disable-html-viewer)]))
-    # Remote images are downloaded with libcurl
-    AC_MSG_CHECKING([for libcurl])
-    if $PKG_CONFIG --exists libcurl; then
-        AC_MSG_RESULT([yes])
-        HTMLVIEW_SYS_CFLAGS="$HTMLVIEW_SYS_CFLAGS `$PKG_CONFIG --cflags libcurl`"
-        HTMLVIEW_SYS_LIBS="$HTMLVIEW_SYS_LIBS `$PKG_CONFIG --libs libcurl`"
-    else
-        AC_MSG_RESULT([no])
-        AC_MSG_ERROR([libcurl not found: it is needed by the HTML viewer for remote images (or configure with --disable-html-viewer)])
-    fi
+    # Remote images are downloaded with libcurl (checked above)
+    HTMLVIEW_SYS_CFLAGS="$HTMLVIEW_SYS_CFLAGS $CURL_CFLAGS"
+    HTMLVIEW_SYS_LIBS="$HTMLVIEW_SYS_LIBS $CURL_LIBS"
     AC_MSG_CHECKING([for libwebp (optional: WebP images in the HTML viewer)])
     if $PKG_CONFIG --exists libwebp; then
         AC_MSG_RESULT([yes])
@@ -585,5 +638,5 @@ echo "Mulberry resources and plugins go to $DESTDIR$prefix/$MULBERRY_DIR"
 echo "Mulberry help files go to $DESTDIR$prefix/$HELP_DIR"
 echo ""
 
-AC_CONFIG_FILES([Makefile Libraries/Makefile Libraries/HTMLView/Makefile Build/Makefile Sources_Common/Makefile Libraries/CICalendar/Makefile Libraries/vCard/Makefile Libraries/XMLLib/Makefile Linux/Makefile Plug-ins/Makefile Plug-ins/PluginLibrary/Makefile Plug-ins/CRAM-MD5/Makefile Plug-ins/DIGEST-MD5/Makefile Plug-ins/SCRAM-SHA-1/Makefile Plug-ins/SCRAM-SHA-256/Makefile Plug-ins/GSSAPI/Makefile Plug-ins/Kerberos/Makefile Plug-ins/CommunicatorAdbkIO/Makefile Plug-ins/Eudora4AdbkIO/Makefile Plug-ins/EudoraAdbkIO/Makefile Plug-ins/NetscapeAdbkIO/Makefile Plug-ins/PineAdbkIO/Makefile Plug-ins/QuickmailAdbkIO/Makefile Plug-ins/vCardAdbkIO/Makefile Plug-ins/ISpell/Makefile Plug-ins/ASpell/Makefile Plug-ins/GPG/Makefile Plug-ins/SMIME/Makefile Plug-ins/SSL/Makefile])
+AC_CONFIG_FILES([Makefile Libraries/Makefile Libraries/HTMLView/Makefile Libraries/OAuth2/Makefile Build/Makefile Sources_Common/Makefile Libraries/CICalendar/Makefile Libraries/vCard/Makefile Libraries/XMLLib/Makefile Linux/Makefile Plug-ins/Makefile Plug-ins/PluginLibrary/Makefile Plug-ins/CRAM-MD5/Makefile Plug-ins/DIGEST-MD5/Makefile Plug-ins/SCRAM-SHA-1/Makefile Plug-ins/SCRAM-SHA-256/Makefile Plug-ins/GSSAPI/Makefile Plug-ins/Kerberos/Makefile Plug-ins/CommunicatorAdbkIO/Makefile Plug-ins/Eudora4AdbkIO/Makefile Plug-ins/EudoraAdbkIO/Makefile Plug-ins/NetscapeAdbkIO/Makefile Plug-ins/PineAdbkIO/Makefile Plug-ins/QuickmailAdbkIO/Makefile Plug-ins/vCardAdbkIO/Makefile Plug-ins/ISpell/Makefile Plug-ins/ASpell/Makefile Plug-ins/GPG/Makefile Plug-ins/SMIME/Makefile Plug-ins/SSL/Makefile])
 AC_OUTPUT

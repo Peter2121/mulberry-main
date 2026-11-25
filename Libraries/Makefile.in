@@ -11,7 +11,8 @@
 	htmldeps-cairo htmldeps-harfbuzz htmldeps-litehtml htmlview \
 	htmlview-clean htmldeps-clean
 
-DIRS = CICalendar vCard XMLLib
+# OAuth2: the OAuth2 core and its test tool (OAUTH2-PLAN.md), always built
+DIRS = CICalendar vCard XMLLib OAuth2
 
 JX_TARGET = @JX_TARGET@
 

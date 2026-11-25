@@ -127,6 +127,9 @@ check_requirements() {
 	need /usr/local/bin/pkg-config pkgconf
 	need /usr/local/bin/$CXX gcc$GCC_VERSION
 	need /usr/local/bin/curl curl
+	# libcurl: OAuth2 (Libraries/OAuth2) and the HTML viewer's remote
+	# images; the curl package provides both the tool and the library
+	need /usr/local/include/curl/curl.h curl
 	need /usr/local/include/ldap.h openldap26-client
 	need /usr/local/include/sodium.h libsodium
 	need /usr/local/include/uninorm.h libunistring
@@ -153,8 +156,6 @@ check_requirements() {
 		# Image decoders (PNG through Cairo)
 		need /usr/local/include/jpeglib.h jpeg-turbo
 		need /usr/local/include/gif_lib.h giflib
-		# Remote images (the curl tool is required above anyway)
-		need /usr/local/include/curl/curl.h curl
 	fi
 	if [ -n "$missing" ]; then
 		die "missing packages, install them with:

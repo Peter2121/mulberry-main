@@ -1,0 +1,81 @@
+#
+# Makefile for Mulberry's OAuth2 core (libOAuth2.a), its test tool
+# oauth2-tool and its unit tests oauth2-unit.  See README.md and
+# OAUTH2-PLAN.md.
+#
+# The core does not depend on JX or on the rest of Mulberry, and it is
+# compiled without Mulberry's prefix header.  It contains no product name:
+# only the test tool receives the application identity, from configure.
+#
+# Compatibility: GNU
+#
+
+.PHONY: all clean distclean check
+
+CXX = @CXX@
+AR = @AR@
+O = .o
+A = .a
+
+include ../../Build/make.version
+
+# Application identity (configure --with-app-id)
+APP_ID = @APP_ID@
+APP_NAME = @APP_NAME@
+APP_VERSION = $(subst _,.,$(MUL_VERSION))
+
+CURL_CFLAGS = @CURL_CFLAGS@
+CURL_LIBS = @CURL_LIBS@
+TOOL_LIBS = @OAUTH2_TOOL_LIBS@
+
+CPPFLAGS = -Iinclude -Isrc $(CURL_CFLAGS)
+CXXFLAGS = -std=gnu++17 -O2 -g -fPIC -Wall -Wextra -Wno-unused-parameter
+TOOL_CPPFLAGS = -DOAUTH2_TOOL_APP_ID='"$(APP_ID)"' \
+	-DOAUTH2_TOOL_APP_NAME='"$(APP_NAME)"' \
+	-DOAUTH2_TOOL_APP_VERSION='"$(APP_VERSION)"'
+
+LIBRARY = libOAuth2$A
+SOURCES = Identity Version
+OBJS = $(SOURCES:%=obj/%$O)
+
+TOOL = oauth2-tool
+UNIT = oauth2-unit
+
+all: $(LIBRARY) $(TOOL)
+
+obj/%$O: src/%.cpp
+	@mkdir -p obj
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -MMD -MP -c -o $@ $<
+
+obj/tools/%$O: tools/%.cpp
+	@mkdir -p obj/tools
+	$(CXX) $(CPPFLAGS) $(TOOL_CPPFLAGS) $(CXXFLAGS) -MMD -MP -c -o $@ $<
+
+obj/tests/%$O: tests/%.cpp
+	@mkdir -p obj/tests
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -MMD -MP -c -o $@ $<
+
+$(LIBRARY): $(OBJS)
+	rm -f $@
+	$(AR) rcs $@ $(OBJS)
+
+# The identity flags are in the object: rebuild it when configure changes
+obj/tools/oauth2-tool$O: Makefile
+
+$(TOOL): obj/tools/oauth2-tool$O $(LIBRARY)
+	$(CXX) -o $@ obj/tools/oauth2-tool$O $(LIBRARY) $(CURL_LIBS) $(TOOL_LIBS)
+
+$(UNIT): obj/tests/unit$O $(LIBRARY)
+	$(CXX) -o $@ obj/tests/unit$O $(LIBRARY) $(CURL_LIBS) $(TOOL_LIBS)
+
+# Offline checks: no network, no account
+check: all $(UNIT)
+	./$(UNIT)
+	./$(TOOL) --version
+
+clean:
+	rm -rf obj $(LIBRARY) $(TOOL) $(UNIT)
+
+distclean: clean
+
+-include $(wildcard obj/*.d obj/tools/*.d obj/tests/*.d)

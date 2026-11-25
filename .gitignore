@@ -160,6 +160,13 @@ Libraries/HTMLView/tests/out/
 # Real mail used for testing (personal data): never committed
 Libraries/HTMLView/tests/*.eml
 
+# OAuth2 core: build products
+Libraries/OAuth2/Makefile
+Libraries/OAuth2/obj/
+Libraries/OAuth2/libOAuth2.a
+Libraries/OAuth2/oauth2-tool
+Libraries/OAuth2/oauth2-unit
+
 # Build artifacts
 Linux/Includes/
 debian/.debhelper/
