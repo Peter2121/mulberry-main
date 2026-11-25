@@ -26,16 +26,22 @@ APP_VERSION = $(subst _,.,$(MUL_VERSION))
 
 CURL_CFLAGS = @CURL_CFLAGS@
 CURL_LIBS = @CURL_LIBS@
+SODIUM_CFLAGS = @SODIUM_CFLAGS@
+SODIUM_LIBS = @SODIUM_LIBS@
+SYS_LIBS = $(CURL_LIBS) $(SODIUM_LIBS)
 TOOL_LIBS = @OAUTH2_TOOL_LIBS@
 
-CPPFLAGS = -Iinclude -Isrc $(CURL_CFLAGS)
+# thirdparty/: nlohmann/json, private to the library (thirdparty/README.md);
+# values are read with explicit get<T>() only
+CPPFLAGS = -Iinclude -Isrc -Ithirdparty -DJSON_USE_IMPLICIT_CONVERSIONS=0 \
+	$(CURL_CFLAGS) $(SODIUM_CFLAGS)
 CXXFLAGS = -std=gnu++17 -O2 -g -fPIC -Wall -Wextra -Wno-unused-parameter
 TOOL_CPPFLAGS = -DOAUTH2_TOOL_APP_ID='"$(APP_ID)"' \
 	-DOAUTH2_TOOL_APP_NAME='"$(APP_NAME)"' \
 	-DOAUTH2_TOOL_APP_VERSION='"$(APP_VERSION)"'
 
 LIBRARY = libOAuth2$A
-SOURCES = Identity Version
+SOURCES = Identity Version Encoding Random Pkce Redact
 OBJS = $(SOURCES:%=obj/%$O)
 
 TOOL = oauth2-tool
@@ -63,10 +69,10 @@ $(LIBRARY): $(OBJS)
 obj/tools/oauth2-tool$O: Makefile
 
 $(TOOL): obj/tools/oauth2-tool$O $(LIBRARY)
-	$(CXX) -o $@ obj/tools/oauth2-tool$O $(LIBRARY) $(CURL_LIBS) $(TOOL_LIBS)
+	$(CXX) -o $@ obj/tools/oauth2-tool$O $(LIBRARY) $(SYS_LIBS) $(TOOL_LIBS)
 
 $(UNIT): obj/tests/unit$O $(LIBRARY)
-	$(CXX) -o $@ obj/tests/unit$O $(LIBRARY) $(CURL_LIBS) $(TOOL_LIBS)
+	$(CXX) -o $@ obj/tests/unit$O $(LIBRARY) $(SYS_LIBS) $(TOOL_LIBS)
 
 # Offline checks: no network, no account
 check: all $(UNIT)

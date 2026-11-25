@@ -515,8 +515,19 @@ AC_SUBST(CURL_LIBS)
 # Mulberry links it from task 2.2 on (OAUTH2_CPPFLAGS, OAUTH2_LIBS).
 # ---------------------------------------------------------------------------
 
+# libsodium (checked above): random bytes and SHA-256 (decision D2)
+if $PKG_CONFIG --exists libsodium; then
+    SODIUM_CFLAGS=`$PKG_CONFIG --cflags libsodium`
+    SODIUM_LIBS=`$PKG_CONFIG --libs libsodium`
+else
+    SODIUM_CFLAGS=""
+    SODIUM_LIBS="-lsodium"
+fi
+AC_SUBST(SODIUM_CFLAGS)
+AC_SUBST(SODIUM_LIBS)
+
 OAUTH2_CPPFLAGS="-I`pwd`/Libraries/OAuth2/include"
-OAUTH2_LIBS="`pwd`/Libraries/OAuth2/libOAuth2.a $CURL_LIBS"
+OAUTH2_LIBS="`pwd`/Libraries/OAuth2/libOAuth2.a $CURL_LIBS $SODIUM_LIBS"
 # Test tools: the GCC run-time directory as rpath (see above)
 OAUTH2_TOOL_LIBS=""
 if test -n "$GCC_RUNTIME_DIR"; then

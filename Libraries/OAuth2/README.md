@@ -20,9 +20,21 @@ of the repository.
 | Path | Contents |
 |---|---|
 | `include/oauth2/` | public headers |
-| `src/` | library sources |
+| `src/` | library sources (and private headers) |
+| `thirdparty/nlohmann/` | vendored nlohmann/json 3.12.0, MIT (`thirdparty/README.md`) |
 | `tools/oauth2-tool.cpp` | command-line test tool |
 | `tests/unit.cpp` | offline unit tests (`oauth2-unit`) |
+
+## Interface so far
+
+| Header | Contents |
+|---|---|
+| `Identity.h` | `oauth2::Identity`, `IsValidIdentityId()` |
+| `Version.h` | library and libcurl versions |
+| `Encoding.h` | base64url without padding; percent and form encoding and decoding; `BuildQuery`, `BuildForm`, `ParseQuery` |
+| `Random.h` | `RandomBytes()` (libsodium), `MakeState()`, `ConstantTimeEquals()` |
+| `Pkce.h` | `MakePkce()`, `PkceChallengeS256()` (RFC 7636, S256 only), `IsValidPkceVerifier()` |
+| `Redact.h` | `Redact()` ("<redacted N bytes>"), `RedactParams()` for query strings and form bodies |
 
 ## Building and testing
 
