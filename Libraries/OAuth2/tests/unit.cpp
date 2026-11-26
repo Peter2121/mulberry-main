@@ -13,6 +13,7 @@
 // OAUTH2-PLAN.md adds its tests here.
 
 #include "oauth2/Authorization.h"
+#include "oauth2/DeviceCode.h"
 #include "oauth2/Encoding.h"
 #include "oauth2/IdToken.h"
 #include "oauth2/Identity.h"
@@ -1303,6 +1304,120 @@ std::string MakeJwt(const std::string& payload)
 		oauth2::Base64UrlEncode(payload) + ".c2lnbmF0dXJl";
 }
 
+// Device authorization answers and poll results (task 1.7)
+void TestDeviceCode()
+{
+	oauth2::DeviceAuthorization a;
+	oauth2::TokenError e;
+	const std::string json = "application/json";
+
+	// Microsoft's answer
+	CHECK(oauth2::ParseDeviceAuthorization(200, json, R"({"user_code":"ABCD-EFGH","device_code":"S3CR3T-dc",)"
+		R"("verification_uri":"https://microsoft.com/devicelogin","expires_in":900,"interval":5,)"
+		R"("message":"To sign in, use a web browser\r\nsecond line"})", 1000, a, e));
+	CHECK(a.device_code == "S3CR3T-dc" && a.user_code == "ABCD-EFGH" && a.received_at == 1000);
+	CHECK(a.verification_uri == "https://microsoft.com/devicelogin" && a.verification_uri_complete.empty());
+	CHECK(a.expires_in == 900 && a.interval == 5 && a.message == "To sign in, use a web browser");
+	CHECK(e.kind == oauth2::TokenError::Kind::None);
+
+	// Google's older name, numbers as strings, the complete URI; no
+	// interval: 5
+	CHECK(oauth2::ParseDeviceAuthorization(200, json, R"({"device_code":"d","user_code":"ABC-DEF-GHI",)"
+		R"("verification_url":"https://www.google.com/device","expires_in":"1800",)"
+		R"("verification_uri_complete":"https://www.google.com/device?code=ABC-DEF-GHI"})", 0, a, e));
+	CHECK(a.verification_uri == "https://www.google.com/device" && a.expires_in == 1800 && a.interval == 5);
+	CHECK(a.verification_uri_complete == "https://www.google.com/device?code=ABC-DEF-GHI");
+	// An interval of 0, or not a number: 5; a string: read
+	CHECK(oauth2::ParseDeviceAuthorization(200, json, R"({"device_code":"d","user_code":"U",)"
+		R"("verification_uri":"http://x.test/d","expires_in":60,"interval":0})", 0, a, e) && a.interval == 5);
+	CHECK(oauth2::ParseDeviceAuthorization(200, json, R"({"device_code":"d","user_code":"U",)"
+		R"("verification_uri":"http://x.test/d","expires_in":60,"interval":"x"})", 0, a, e) && a.interval == 5);
+	CHECK(oauth2::ParseDeviceAuthorization(200, json, R"({"device_code":"d","user_code":"U",)"
+		R"("verification_uri":"http://x.test/d","expires_in":60,"interval":"3"})", 0, a, e) && a.interval == 3);
+	// A complete URI that could not be shown as it is: dropped
+	CHECK(oauth2::ParseDeviceAuthorization(200, json, R"({"device_code":"d","user_code":"U",)"
+		R"("verification_uri":"https://x.test/d","expires_in":60,)"
+		R"("verification_uri_complete":"https://x.test/d?code=A B"})", 0, a, e) && a.verification_uri_complete.empty());
+
+	// Refused answers: the field named, never the device code, nothing kept
+	const struct
+	{
+		const char* body;
+		const char* part;
+	} bad[] = {
+		{ R"({"user_code":"U","verification_uri":"https://x.test/d","expires_in":60})", "no valid device_code" },
+		{ R"({"device_code":"S3CR3T","verification_uri":"https://x.test/d","expires_in":60})", "no valid user_code" },
+		{ R"({"device_code":"S3CR3T","user_code":"AB CD","verification_uri":"https://x.test/d","expires_in":60})",
+			"no valid user_code" },
+		{ "{\"device_code\":\"S3CR3T\",\"user_code\":\"AB\\u001b[2JCD\",\"verification_uri\":\"https://x.test/d\","
+			"\"expires_in\":60}", "no valid user_code" },
+		{ R"({"device_code":"S3CR3T","user_code":"U","expires_in":60})", "no valid verification_uri" },
+		{ R"({"device_code":"S3CR3T","user_code":"U","verification_uri":"javascript:void","expires_in":60})",
+			"no valid verification_uri" },
+		{ R"({"device_code":"S3CR3T","user_code":"U","verification_uri":"https://","expires_in":60})",
+			"no valid verification_uri" },
+		{ R"({"device_code":"S3CR3T","user_code":"U","verification_uri":"https://x.test/d"})", "no valid expires_in" },
+		{ R"({"device_code":"S3CR3T","user_code":"U","verification_uri":"https://x.test/d","expires_in":0})",
+			"no valid expires_in" },
+		{ R"(["S3CR3T"])", "not a JSON object" },
+	};
+	for (const auto& item : bad)
+	{
+		a.device_code = "kept?";
+		CHECK(!oauth2::ParseDeviceAuthorization(200, json, item.body, 0, a, e));
+		CHECK(e.kind == oauth2::TokenError::Kind::Protocol && e.message.find(item.part) != std::string::npos);
+		CHECK(e.message.find("S3CR3T") == std::string::npos && a.device_code.empty());
+	}
+	CHECK(!oauth2::ParseDeviceAuthorization(502, "text/html", "<html>S3CR3T</html>", 0, a, e));
+	CHECK(e.kind == oauth2::TokenError::Kind::Http && e.http_status == 502 &&
+		e.message == "HTTP 502 from the device authorization endpoint (text/html, 19 bytes)");
+
+	// Errors: Microsoft's answers for an unknown client
+	CHECK(!oauth2::ParseDeviceAuthorization(400, json, R"({"error":"invalid_request","error_codes":[50059],)"
+		R"("error_description":"AADSTS50059: No tenant-identifying information found.\r\nTrace ID: t"})", 0, a, e));
+	CHECK(e.kind == oauth2::TokenError::Kind::OAuth && e.aadsts == 50059 && oauth2::IsUnknownClient(e) &&
+		!e.IsClientProblem());
+	CHECK(!oauth2::ParseDeviceAuthorization(400, json, R"({"error":"unauthorized_client",)"
+		R"("error_description":"AADSTS700016: Application with identifier 'x' was not found"})", 0, a, e));
+	CHECK(e.aadsts == 700016 && oauth2::IsUnknownClient(e) && e.IsClientProblem());
+	CHECK(!oauth2::ParseDeviceAuthorization(400, json, R"({"error":"invalid_scope"})", 0, a, e));
+	CHECK(!oauth2::IsUnknownClient(e));
+	oauth2::TokenError network;
+	network.kind = oauth2::TokenError::Kind::Network;
+	CHECK(!oauth2::IsUnknownClient(network));
+
+	// Poll results (RFC 8628 section 3.5; Microsoft's names)
+	const struct
+	{
+		const char* error;
+		oauth2::DevicePoll poll;
+	} polls[] = {
+		{ "authorization_pending", oauth2::DevicePoll::Pending },
+		{ "slow_down", oauth2::DevicePoll::SlowDown },
+		{ "access_denied", oauth2::DevicePoll::Denied },
+		{ "authorization_declined", oauth2::DevicePoll::Denied },
+		{ "expired_token", oauth2::DevicePoll::Expired },
+		{ "bad_verification_code", oauth2::DevicePoll::Failed },
+		{ "invalid_grant", oauth2::DevicePoll::Failed },
+		{ "invalid_client", oauth2::DevicePoll::Failed },
+	};
+	for (const auto& item : polls)
+	{
+		oauth2::TokenError poll;
+		poll.kind = oauth2::TokenError::Kind::OAuth;
+		poll.error = item.error;
+		CHECK(oauth2::ClassifyDevicePoll(poll) == item.poll);
+	}
+	CHECK(oauth2::ClassifyDevicePoll(network) == oauth2::DevicePoll::Failed);
+	CHECK(oauth2::ClassifyDevicePoll(oauth2::TokenError()) == oauth2::DevicePoll::Granted);
+	CHECK(std::string(oauth2::DevicePollName(oauth2::DevicePoll::SlowDown)) == "slow down");
+
+	// No request without a device code
+	oauth2::TokenResponse r;
+	CHECK(oauth2::PollDeviceToken(oauth2::TokenEndpoint(), "", oauth2::HttpSettings(), r, e) ==
+		oauth2::DevicePoll::Failed && e.kind == oauth2::TokenError::Kind::Config);
+}
+
 // ID token claims (task 1.6; account check of task 3.5)
 void TestIdToken()
 {
@@ -1388,6 +1503,7 @@ int main()
 	TestTokenEndpointOf();
 	TestAuthorizationUrl();
 	TestIdToken();
+	TestDeviceCode();
 
 	if (sFailures != 0)
 	{

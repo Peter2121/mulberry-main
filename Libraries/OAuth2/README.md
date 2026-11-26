@@ -26,7 +26,7 @@ of the repository.
 | `tests/unit.cpp` | offline unit tests (`oauth2-unit`) |
 | `tests/token-*` | token client tests: mock token endpoint (`token-server.py`), driver (`oauth2-token-driver`), script (`token-tests.sh`) |
 | `tests/listener-*` | loopback listener tests: driver (`oauth2-listener-driver`), script with curl as the browser (`listener-tests.sh`) |
-| `tests/login-tests.sh`, `tests/fake-browser.py` | `oauth2-tool login` and `refresh` against the mock token endpoint over TLS, with a fake xdg-open and browser |
+| `tests/login-tests.sh`, `tests/fake-browser.py` | `oauth2-tool login`, `device` and `refresh` against the mock token endpoint over TLS, with a fake xdg-open and browser; device code scenarios chosen by the tenant |
 | `tests/google-error-decode.sh` | live-test helper, not run by `make check`: decodes the reason (`authError`) in the address of Google's sign-in error page |
 
 ## Interface so far
@@ -49,6 +49,7 @@ of the repository.
 | `Authorization.h` | `BuildAuthorizationUrl()`; `MissingScopes()` and `RefreshScopes()` (what the user did not grant) |
 | `Browser.h` | `OpenBrowser()`: xdg-open, then `$BROWSER`, without a shell |
 | `IdToken.h` | `ParseIdToken()`: the claims of the ID token (e-mail address, audience), signature not checked |
+| `DeviceCode.h` | device code (RFC 8628): `RequestDeviceAuthorization()`, `WaitForDeviceToken()`, `PollDeviceToken()`, `IsUnknownClient()` |
 
 ## Provider configuration files
 
@@ -216,12 +217,39 @@ Mulberry later, task 3.4):
 7. A refresh asks for `RefreshScopes()`: the scopes of the sign-in minus the
    refused ones (Google answers `invalid_scope` otherwise).
 
+## Device code sign-in
+
+For a provider with a `device_authorization_endpoint` (Microsoft), the user
+can sign in on another device (`oauth2-tool device`; Mulberry later, task
+6.1):
+
+1. `RequestDeviceAuthorization()`: client ID, scopes (and the secret when
+   there is one). The answer is checked before anything is shown: a user
+   code of printable characters without spaces, an http(s) verification
+   URI without spaces, an expiry. A client the provider does not know is
+   reported there (`IsUnknownClient()`: also Microsoft's AADSTS50059 and
+   AADSTS700016), so no `ProbeClient()` is needed.
+2. Show the verification URI and the user code (and
+   `verification_uri_complete` when given).
+3. `WaitForDeviceToken()`: polls the token endpoint every `interval`
+   seconds (default 5; `slow_down` adds 5), until the user signs in,
+   refuses (`access_denied`, Microsoft's `authorization_declined`), the
+   provider says `expired_token`, the code's lifetime or the caller's limit
+   passes, or the cancel flag is set. A network failure or an HTTP 5xx is
+   tried again with a doubled interval (at most 60 s), 3 times in a row.
+   The lifetime is measured on a monotonic clock.
+
+Microsoft needs "Allow public client flows" in the app registration for the
+device code (`docs/oauth2/register-microsoft.md`, step 3); otherwise the
+polls fail with AADSTS7000218.
+
 ## oauth2-tool
 
 ```sh
 oauth2-tool [options] providers        # check the files and list the providers
 oauth2-tool [options] lookup NAME      # provider of a server name or e-mail address
 oauth2-tool [options] login ACCOUNT    # sign in in the browser, keep the refresh token
+oauth2-tool [options] device ACCOUNT   # sign in on another device with a code (Microsoft)
 oauth2-tool [options] refresh ACCOUNT  # new access token from the kept refresh token
 oauth2-tool --version
 ```
@@ -231,18 +259,20 @@ Options: `--system-config FILE`, `--user-config FILE`, `--no-user-config`,
 file, or the sign-in failed; 2 usage or configuration error. Client
 secrets are shown as `<redacted N bytes>`.
 
-`login` and `refresh` find the provider from the account's domain, or
+`login`, `device` and `refresh` find the provider from the account's domain, or
 `--provider ID` (a Google Workspace or Microsoft 365 domain). Options:
 `--client-id`, `--tenant` (instead of the configured ones), `--services
 mail,calendar,contacts` (default: every group of the provider),
 `--prompt VALUE` (`""` sends none), `--no-browser`, `--no-client-check`
 (skips both checks of step 2 of "Browser sign-in"),
-`--timeout S` (wait for the browser, default 300), `--token-file FILE`,
+`--timeout S` (wait for the sign-in; `login`: default 300, `device`: default
+until the code expires), `--token-file FILE`,
 `--ca-file FILE` (tests), `--verbose` (log on stderr, secrets redacted),
 `--show-token`. Ctrl-C cancels.
 
 `login` prints the token type, expiry, requested, granted and refused
-scopes, and the address of the ID token. The refresh token goes to
+scopes, and the address of the ID token; `device` prints the code and URL to
+use on the other device, then the same. The refresh token goes to
 `~/.config/<app>/oauth2-tool/PROVIDER-ACCOUNT.json` (folder 0700, file
 0600, written through a temporary file), for this tool only: Mulberry keeps
 its tokens in the keyring. `refresh` refuses a file issued to another client

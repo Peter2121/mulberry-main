@@ -23,6 +23,7 @@
 
 #include "oauth2/Authorization.h"
 #include "oauth2/Browser.h"
+#include "oauth2/DeviceCode.h"
 #include "oauth2/IdToken.h"
 #include "oauth2/Identity.h"
 #include "oauth2/Listener.h"
@@ -109,6 +110,8 @@ void PrintUsage(std::FILE* out)
 		"  lookup NAME        the provider of a server name or an e-mail address\n"
 		"  login ACCOUNT      sign in in the browser as ACCOUNT (an e-mail address),\n"
 		"                     show what was granted, keep the refresh token\n"
+		"  device ACCOUNT     sign in on another device (a phone) with a code, for\n"
+		"                     providers that offer it (Microsoft); keeps the token as login\n"
 		"  refresh ACCOUNT    new access token from the kept refresh token\n"
 		"  --version          versions of the tool, the library and libcurl\n"
 		"  --help             this help\n"
@@ -121,7 +124,7 @@ void PrintUsage(std::FILE* out)
 		"  --fix-permissions     repair the permissions of the user provider file and\n"
 		"                        of the token file (mode 0600, folder 0700) first\n"
 		"\n"
-		"Options of login and refresh:\n"
+		"Options of login, device and refresh:\n"
 		"  --provider ID         the provider (default: from the account's domain)\n"
 		"  --client-id ID        client ID instead of the configured one\n"
 		"  --tenant T            Microsoft tenant instead of the configured one\n"
@@ -132,7 +135,8 @@ void PrintUsage(std::FILE* out)
 		"  --no-browser          only print the URL to open\n"
 		"  --no-client-check     skip the checks of the client ID (its form, and the\n"
 		"                        provider's answer before the browser opens)\n"
-		"  --timeout S           wait for the browser at most S seconds (default 300)\n"
+		"  --timeout S           wait for the sign-in at most S seconds (login: default\n"
+		"                        300; device: default until the code expires)\n"
 		"  --token-file FILE     instead of %s/oauth2-tool/PROVIDER-ACCOUNT.json\n"
 		"  --ca-file FILE        certificate authorities for the token endpoint (tests)\n"
 		"  --verbose             log of the listener and the token requests on stderr\n"
@@ -173,6 +177,7 @@ struct Options
 	bool no_browser = false;
 	bool client_check = true;
 	long timeout = 300;
+	bool timeout_set = false;
 	std::string token_file;
 	std::string ca_file;
 	bool verbose = false;
@@ -719,6 +724,20 @@ void CheckTokenFile(const Options& options, const std::string& path)
 	ReportPermissions(path, oauth2::FileRole::User);
 }
 
+int SaveSignIn(const Options& options, const oauth2::Provider& provider, const std::string& account,
+	const std::vector<std::string>& scopes, const oauth2::TokenResponse& response, const std::string& path);
+
+// The offline check of the client ID's form; false after the message
+bool CheckClientIdForm(const Options& options, const oauth2::Provider& provider)
+{
+	std::string format_error;
+	if (!options.client_check || oauth2::CheckClientIdFormat(provider, format_error))
+		return true;
+	std::fprintf(stderr, "%s: %s\n    check the client ID in the provider files or --client-id\n",
+		cToolName, format_error.c_str());
+	return false;
+}
+
 int CommandLogin(const Options& options)
 {
 	if (options.arguments.size() != 1 || options.arguments[0].empty())
@@ -734,13 +753,8 @@ int CommandLogin(const Options& options)
 	std::vector<std::string> groups;
 	if (!FindProvider(options, config, account, provider) || !ScopeGroups(options, provider, groups))
 		return cExitError;
-	std::string format_error;
-	if (options.client_check && !oauth2::CheckClientIdFormat(provider, format_error))
-	{
-		std::fprintf(stderr, "%s: %s\n    check the client ID in the provider files or --client-id\n",
-			cToolName, format_error.c_str());
+	if (!CheckClientIdForm(options, provider))
 		return cExitError;
-	}
 	const std::string path = TokenFilePath(options, provider, account);
 	if (path.empty())
 	{
@@ -841,6 +855,13 @@ int CommandLogin(const Options& options)
 		PrintTokenError("the code exchange", token_error);
 		return cExitFailed;
 	}
+	return SaveSignIn(options, provider, account, scopes, response, path);
+}
+
+// The end of login and device: prints the answer, keeps the refresh token
+int SaveSignIn(const Options& options, const oauth2::Provider& provider, const std::string& account,
+	const std::vector<std::string>& scopes, const oauth2::TokenResponse& response, const std::string& path)
+{
 	const std::string address = PrintTokens(options, provider, scopes, response, account);
 
 	if (response.refresh_token.empty())
@@ -861,6 +882,7 @@ int CommandLogin(const Options& options)
 	file.email = address;
 	file.saved_at = UtcNow();
 	file.refresh_token = response.refresh_token;
+	std::string error;
 	if (!SaveTokenFile(path, file, error))
 	{
 		std::printf("refresh token: %s, not saved\n", ShowSecret(options, response.refresh_token).c_str());
@@ -870,6 +892,100 @@ int CommandLogin(const Options& options)
 	std::printf("refresh token: %s, saved in %s\n", ShowSecret(options, response.refresh_token).c_str(),
 		oauth2::DisplayPath(path).c_str());
 	return 0;
+}
+
+int CommandDevice(const Options& options)
+{
+	if (options.arguments.size() != 1 || options.arguments[0].empty())
+	{
+		std::fprintf(stderr, "%s: device needs one account (an e-mail address)\n", cToolName);
+		return cExitError;
+	}
+	const std::string& account = options.arguments[0];
+	oauth2::ProviderConfig config;
+	if (!LoadConfig(options, config))
+		return cExitError;
+	oauth2::Provider provider;
+	std::vector<std::string> groups;
+	if (!FindProvider(options, config, account, provider) || !ScopeGroups(options, provider, groups))
+		return cExitError;
+	if (!provider.SupportsDeviceCode())
+	{
+		std::fprintf(stderr, "%s: %s offers no device code sign-in (no \"device_authorization_endpoint\" in "
+			"its entry): use %s login\n", cToolName, provider.name.c_str(), cToolName);
+		return cExitError;
+	}
+	if (!CheckClientIdForm(options, provider))
+		return cExitError;
+	const std::string path = TokenFilePath(options, provider, account);
+	if (path.empty())
+	{
+		std::fprintf(stderr, "%s: no home folder for the token file: use --token-file\n", cToolName);
+		return cExitError;
+	}
+	const std::vector<std::string> scopes = provider.ScopesFor(groups);
+	InstallCancelHandler();
+	const oauth2::HttpSettings http = ToolHttpSettings(options);
+	std::printf("provider: %s (%s)\n", provider.id.c_str(), provider.name.c_str());
+	std::printf("account: %s\n", account.c_str());
+	std::printf("client ID: %s\n", provider.client_id.c_str());
+	std::fflush(stdout);
+
+	// The request also checks the client: no ProbeClient()
+	oauth2::DeviceAuthorization authorization;
+	oauth2::TokenError error;
+	if (!oauth2::RequestDeviceAuthorization(provider, scopes, http, authorization, error))
+	{
+		PrintTokenError("the device code request", error);
+		if (oauth2::IsUnknownClient(error) && !error.IsClientProblem())
+			PrintRegistrationHint();
+		return error.kind == oauth2::TokenError::Kind::Config ? cExitError : cExitFailed;
+	}
+
+	std::fprintf(stderr, "\nOn a phone or another computer, open\n\n    %s\n\nand enter the code\n\n    %s\n\n",
+		authorization.verification_uri.c_str(), authorization.user_code.c_str());
+	if (!authorization.verification_uri_complete.empty())
+		std::fprintf(stderr, "(or open %s, which holds the code)\n", authorization.verification_uri_complete.c_str());
+	std::fprintf(stderr, "Then sign in to %s as %s. The code expires in %ld s (%s).\n", provider.name.c_str(),
+		account.c_str(), authorization.expires_in,
+		LocalTime(authorization.received_at + authorization.expires_in).c_str());
+	if (options.timeout_set && options.timeout < authorization.expires_in)
+		std::fprintf(stderr, "Waiting for the sign-in (at most %ld s; Ctrl-C to cancel)...\n", options.timeout);
+	else
+		std::fprintf(stderr, "Waiting for the sign-in (Ctrl-C to cancel)...\n");
+
+	const oauth2::TokenEndpoint endpoint = oauth2::TokenEndpointOf(provider);
+	oauth2::TokenResponse response;
+	if (!oauth2::WaitForDeviceToken(endpoint, authorization, options.timeout_set ? options.timeout : 0, http,
+		response, error))
+	{
+		switch (oauth2::ClassifyDevicePoll(error))
+		{
+		case oauth2::DevicePoll::Denied:
+			std::fprintf(stderr, "%s: the sign-in was refused: %s\n", cToolName, error.message.c_str());
+			break;
+		case oauth2::DevicePoll::Expired:
+			std::fprintf(stderr, "%s: the provider says the code expired (%s): run the command again\n",
+				cToolName, error.message.c_str());
+			break;
+		default:
+			if (error.kind == oauth2::TokenError::Kind::Cancelled)
+				std::fprintf(stderr, "%s: cancelled\n", cToolName);
+			else if (error.kind == oauth2::TokenError::Kind::Timeout)
+				std::fprintf(stderr, "%s: %s\n", cToolName, error.message.c_str());
+			else
+			{
+				PrintTokenError("waiting for the sign-in", error);
+				// Microsoft: the device code is a "public client flow"
+				if (error.aadsts == 7000218)
+					std::fprintf(stderr, "    Microsoft: turn on \"Allow public client flows\" in the app "
+						"registration\n    (docs/oauth2/register-microsoft.md, step 3)\n");
+			}
+			break;
+		}
+		return cExitFailed;
+	}
+	return SaveSignIn(options, provider, account, scopes, response, path);
 }
 
 int CommandRefresh(const Options& options)
@@ -1050,6 +1166,7 @@ bool ParseOptions(int argc, char* argv[], Options& options)
 			char* end = nullptr;
 			const std::string value = argv[++i];
 			options.timeout = std::strtol(value.c_str(), &end, 10);
+			options.timeout_set = true;
 			if (value.empty() || *end != '\0' || options.timeout <= 0 || options.timeout > 3600)
 			{
 				std::fprintf(stderr, "%s: --timeout needs a number of seconds from 1 to 3600\n", cToolName);
@@ -1104,6 +1221,8 @@ int main(int argc, char* argv[])
 		return CommandLookup(options);
 	if (options.command == "login")
 		return CommandLogin(options);
+	if (options.command == "device")
+		return CommandDevice(options);
 	if (options.command == "refresh")
 		return CommandRefresh(options);
 

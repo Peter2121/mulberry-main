@@ -10,10 +10,12 @@
 
 #include "oauth2/TokenClient.h"
 
+#include "oauth2/DeviceCode.h"
 #include "oauth2/Pkce.h"
 #include "oauth2/Provider.h"
 #include "oauth2/Redact.h"
 #include "HttpClient.h"
+#include "TokenInternal.h"
 
 #include <nlohmann/json.hpp>
 
@@ -25,10 +27,9 @@
 namespace oauth2
 {
 
-namespace
+// Shared with DeviceCode.cpp (TokenInternal.h)
+namespace internal
 {
-
-typedef nlohmann::ordered_json Json;
 
 // Longest error description kept in messages, in bytes
 const size_t cMaxDescription = 300;
@@ -238,7 +239,9 @@ void SetOAuthError(const Json& object, long http_status, TokenError& error)
 		error.message += ": " + error.description;
 }
 
-} // namespace
+} // namespace internal
+
+using namespace internal;
 
 bool TokenError::RequiresSignIn() const
 {
@@ -537,8 +540,7 @@ bool ProbeWithDeviceCode(const Provider& provider, const std::vector<std::string
 		error = TokenError();
 		return true;
 	}
-	if (error.kind == TokenError::Kind::OAuth &&
-		(error.IsClientProblem() || error.aadsts == 50059 || error.aadsts == 700016))
+	if (IsUnknownClient(error))
 	{
 		error.message = "the provider does not know this client ID (" + error.message + ")";
 		return false;

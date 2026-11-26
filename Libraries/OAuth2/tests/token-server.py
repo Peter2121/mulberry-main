@@ -46,6 +46,22 @@ stable = set()
 rotated_out = set()
 counter = [1]
 
+# Device code flows (login-tests.sh, task 1.7): the scenario comes from the
+# endpoint path /device/<scenario>; each poll of a device code gets the next
+# answer of its script (the last one repeats)
+DEVICE_SCRIPTS = {
+    'ok': ['pending', 'grant'],
+    'complete': ['grant'],
+    'slow': ['pending', 'slow_down', 'grant'],
+    'denied': ['pending', 'access_denied'],
+    'declined': ['authorization_declined'],
+    'expired': ['expired_token'],
+    'forever': ['pending'],
+    'flaky': ['http_500', 'grant'],
+    'publicoff': ['public_off'],
+}
+device_codes = {}
+
 
 def b64url(data):
     return base64.urlsafe_b64encode(json.dumps(data).encode()).rstrip(b'=').decode()
@@ -149,13 +165,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
         with lock:
             with open(LOGFILE, 'a') as log:
                 log.write(json.dumps({'path': self.path, 'headers': dict(self.headers),
-                                      'form': form}) + '\n')
+                                      'form': form, 'time': time.time()}) + '\n')
         route = self.path.split('?')[0]
         try:
             if route == '/token':
                 self.token(form)
             elif route == '/devicecode':
                 self.devicecode(form)
+            elif route.startswith('/device/'):
+                self.device_flow(form, route[len('/device/'):])
             elif route == '/google-rapt':
                 self.send(400, GOOGLE_RAPT)
             elif route == '/ms-invalid-client':
@@ -225,6 +243,53 @@ class Handler(http.server.BaseHTTPRequestHandler):
                         'error_description': 'AADSTS50059: No tenant-identifying information found in '
                         'either the request or implied by any provided credentials.\r\nTrace ID: t'})
 
+    # Device authorization request of a device code flow (RFC 8628 section
+    # 3.2); "badanswer": no user_code
+    def device_flow(self, form, scenario):
+        if form.get('client_id') != CLIENT_ID:
+            return self.send(400, {'error': 'invalid_request', 'error_codes': [50059],
+                                   'error_description': 'AADSTS50059: No tenant-identifying information found.'})
+        if scenario != 'badanswer' and scenario not in DEVICE_SCRIPTS:
+            return self.error(400, 'invalid_request', 'unknown scenario')
+        with lock:
+            counter[0] += 1
+            code = 'S3CR3T-device-%s-%d' % (scenario, counter[0])
+            device_codes[code] = {'scenario': scenario, 'polls': 0}
+        answer = {'device_code': code, 'user_code': 'WDJB-MJHT',
+                  'verification_uri': 'https://127.0.0.1/device',
+                  'expires_in': 3 if scenario == 'forever' else 30, 'interval': 1,
+                  'message': 'Enter the code WDJB-MJHT at https://127.0.0.1/device'}
+        if scenario == 'complete':
+            answer['verification_uri_complete'] = 'https://127.0.0.1/device?code=WDJB-MJHT'
+        if scenario == 'badanswer':
+            del answer['user_code']
+        self.send(200, answer)
+
+    # One poll of a device code (RFC 8628 section 3.5, Microsoft's codes);
+    # called with the lock held
+    def device_poll(self, form, cookie):
+        state = device_codes.get(form.get('device_code', ''))
+        if not state:
+            return self.error(400, 'bad_verification_code', 'unknown device code')
+        script = DEVICE_SCRIPTS[state['scenario']]
+        step = script[min(state['polls'], len(script) - 1)]
+        state['polls'] += 1
+        if step == 'pending':
+            return self.error(400, 'authorization_pending', 'AADSTS70016: OAuth 2.0 device flow error. '
+                              'Authorization is pending.')
+        if step in ('slow_down', 'access_denied', 'authorization_declined', 'expired_token'):
+            return self.error(400, step, 'The user said no' if step == 'access_denied' else '')
+        if step == 'http_500':
+            return self.send(500, '<html>busy</html>', 'text/html')
+        if step == 'public_off':
+            return self.send(401, {'error': 'invalid_client', 'error_codes': [7000218],
+                                   'error_description': 'AADSTS7000218: The request body must contain the '
+                                   'following parameter: client_assertion or client_secret.'})
+        del device_codes[form['device_code']]
+        refresh = 'S3CR3T-refresh-device-%d' % counter[0]
+        rotating.add(refresh)
+        return self.send(200, tokens(refresh), extra=cookie)
+
     def token(self, form):
         if self.headers.get('Content-Type', '') != 'application/x-www-form-urlencoded':
             return self.error(400, 'invalid_request', 'form expected')
@@ -250,6 +315,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 refresh = 'S3CR3T-refresh-1' if code == CODE else 'S3CR3T-refresh-for-' + code[len(CODE_PREFIX):]
                 rotating.add(refresh)
                 return self.send(200, tokens(refresh), extra=cookie)
+            if grant == 'urn:ietf:params:oauth:grant-type:device_code':
+                return self.device_poll(form, cookie)
             if grant == 'refresh_token':
                 token = form.get('refresh_token', '')
                 if token in rotating:

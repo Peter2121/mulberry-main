@@ -1,7 +1,7 @@
 #!/bin/sh
 #
-# Tests of "oauth2-tool login" and "oauth2-tool refresh" (OAUTH2-PLAN.md,
-# task 1.6) without a provider: the mock token endpoint over TLS
+# Tests of "oauth2-tool login", "device" and "refresh" (OAUTH2-PLAN.md,
+# tasks 1.6 and 1.7) without a provider: the mock token endpoint over TLS
 # (token-server.py), a fake xdg-open, and a fake browser (fake-browser.py)
 # that brings a code back to the tool's listener.  Checks the authorization
 # URL, the browser launch without a shell, the client check, the code
@@ -93,6 +93,17 @@ cat > "$CONFIG" <<EOF
       "scopes": { "always": ["openid", "email"], "mail": ["https://mail.example/"] },
       "redirect": "http://127.0.0.1/callback",
       "client_id_format": "uuid",
+      "client_id": "test-client"
+    },
+    "mockdev": {
+      "_comment": "Device code; the tenant picks the mock server's scenario",
+      "name": "MockDev",
+      "authorization_endpoint": "https://127.0.0.1:$TLSPORT/authorize",
+      "token_endpoint": "https://127.0.0.1:$TLSPORT/token",
+      "device_authorization_endpoint": "https://127.0.0.1:$TLSPORT/device/{tenant}",
+      "scopes": { "always": ["offline_access", "openid"], "mail": ["https://mail.example/"] },
+      "redirect": "http://127.0.0.1/callback",
+      "tenant": "ok",
       "client_id": "test-client"
     }
   }
@@ -378,6 +389,96 @@ check "client ID of the wrong form: exit 2 before any request" sh -c "[ \"\$(cat
 run formskip code bin login --no-client-check --provider mockuuid --client-id wrong-id user@example.org
 check "--no-client-check: the form is not checked either" sh -c "[ \"\$(cat '$OUT/formskip.status')\" = 1 ] &&
 	grep -q 'the code exchange failed: .*invalid_client' '$OUT/formskip.err'"
+
+# 8. Device code (task 1.7): mockdev, the scenario as tenant.  polls N
+# SCENARIO: "gap gap..." in seconds between the device code request and the
+# polls of the server's requests after its first N
+polls() {
+	"$PYTHON" -I -c 'import json, sys
+times = []
+for line in open(sys.argv[1]).readlines()[int(sys.argv[2]):]:
+    r = json.loads(line)
+    if r["path"].startswith("/device/" + sys.argv[3]) or r["form"].get("device_code", "").startswith("S3CR3T-device-" + sys.argv[3] + "-"):
+        times.append(r["time"])
+print(" ".join("%.1f" % (b - a) for a, b in zip(times, times[1:])))' "$SLOG" "$1" "$2"
+}
+device() {
+	# device NAME SCENARIO [ARGS...]
+	name=$1
+	scenario=$2
+	shift 2
+	run "$name" none bin-none device --provider mockdev --tenant "$scenario" --token-file "$OUT/$name.json" "$@" \
+		user@example.org
+}
+before=$(wc -l < "$SLOG")
+device devok ok --verbose
+requests_since $before > "$OUT/devok.requests"
+polls $before ok > "$OUT/devok.polls"
+check "device: code and URL shown, polled at the interval, tokens saved" sh -c "
+	[ \"\$(cat '$OUT/devok.status')\" = 0 ] &&
+	grep -q -x '    https://127.0.0.1/device' '$OUT/devok.err' && grep -q -x '    WDJB-MJHT' '$OUT/devok.err' &&
+	grep -q 'The code expires in 30 s' '$OUT/devok.err' &&
+	[ \"\$(sed -n 1p '$OUT/devok.requests')\" = '/device/ok test-client None None False offline_access openid https://mail.example/' ] &&
+	[ \"\$(grep -c '^/token test-client urn:ietf:params:oauth:grant-type:device_code' '$OUT/devok.requests')\" = 2 ] &&
+	\"$PYTHON\" -I -c 'import sys; g = [float(x) for x in open(sys.argv[1]).read().split()]; sys.exit(not (len(g) == 2 and all(0.9 <= x < 2.5 for x in g)))' '$OUT/devok.polls' &&
+	grep -q '^refresh token: <redacted .*saved in' '$OUT/devok.out' && grep -q 'S3CR3T-refresh-device-' '$OUT/devok.json' &&
+	[ \"\$(stat -f %Lp '$OUT/devok.json')\" = 600 ]"
+check "device: no secret in the output or the log (device code redacted)" sh -c "
+	! grep -q S3CR3T '$OUT/devok.out' '$OUT/devok.err' && grep -q 'device_code.*<redacted' '$OUT/devok.err'"
+run devrefresh none bin-none refresh --provider mockdev --tenant ok --token-file "$OUT/devok.json" user@example.org
+check "device: the saved refresh token works" sh -c "[ \"\$(cat '$OUT/devrefresh.status')\" = 0 ] &&
+	grep -q '^refresh token: rotated' '$OUT/devrefresh.out'"
+device devcomplete complete
+check "device: the URL with the code shown when given" sh -c "[ \"\$(cat '$OUT/devcomplete.status')\" = 0 ] &&
+	grep -q -x '(or open https://127.0.0.1/device?code=WDJB-MJHT, which holds the code)' '$OUT/devcomplete.err'"
+before=$(wc -l < "$SLOG")
+device devslow slow --verbose
+polls $before slow > "$OUT/devslow.polls"
+check "device: slow_down adds 5 s to the interval" sh -c "[ \"\$(cat '$OUT/devslow.status')\" = 0 ] &&
+	grep -q 'slow_down, polling every 6 s' '$OUT/devslow.err' &&
+	\"$PYTHON\" -I -c 'import sys; g = [float(x) for x in open(sys.argv[1]).read().split()]; sys.exit(not (len(g) == 3 and g[2] >= 5.8))' '$OUT/devslow.polls'"
+device devdenied denied
+check "device: access_denied: refused, exit 1, no token file" sh -c "[ \"\$(cat '$OUT/devdenied.status')\" = 1 ] &&
+	grep -q 'the sign-in was refused: access_denied: The user said no' '$OUT/devdenied.err' && [ ! -e '$OUT/devdenied.json' ]"
+device devdeclined declined
+check "device: Microsoft's authorization_declined: refused" sh -c "[ \"\$(cat '$OUT/devdeclined.status')\" = 1 ] &&
+	grep -q 'the sign-in was refused: authorization_declined' '$OUT/devdeclined.err'"
+device devexpired expired
+check "device: expired_token: run again" sh -c "[ \"\$(cat '$OUT/devexpired.status')\" = 1 ] &&
+	grep -q 'the provider says the code expired (expired_token): run the command again' '$OUT/devexpired.err'"
+device devforever forever
+check "device: the code's lifetime ends the wait" sh -c "[ \"\$(cat '$OUT/devforever.status')\" = 1 ] &&
+	grep -q 'the code expired after 3 s without a sign-in' '$OUT/devforever.err'"
+device devtimeout forever --timeout 1
+check "device: --timeout ends the wait sooner" sh -c "[ \"\$(cat '$OUT/devtimeout.status')\" = 1 ] &&
+	grep -q 'Waiting for the sign-in (at most 1 s' '$OUT/devtimeout.err' &&
+	grep -q 'no sign-in within 1 s' '$OUT/devtimeout.err'"
+device devflaky flaky --verbose
+check "device: an HTTP 500 is tried again later" sh -c "[ \"\$(cat '$OUT/devflaky.status')\" = 0 ] &&
+	grep -q 'poll failed (HTTP 500 from the token endpoint .*), trying again in 2 s' '$OUT/devflaky.err'"
+device devpublic publicoff
+check "device: AADSTS7000218: public client flows advice" sh -c "[ \"\$(cat '$OUT/devpublic.status')\" = 1 ] &&
+	grep -q 'waiting for the sign-in failed: invalid_client: AADSTS7000218' '$OUT/devpublic.err' &&
+	grep -q 'Allow public client flows' '$OUT/devpublic.err'"
+device devbadanswer badanswer
+check "device: an answer without user code: refused" sh -c "[ \"\$(cat '$OUT/devbadanswer.status')\" = 1 ] &&
+	grep -q 'the device code request failed: .*has no valid user_code' '$OUT/devbadanswer.err'"
+device devbadclient ok --client-id wrong-client
+check "device: unknown client (AADSTS50059): the advice once, exit 1" sh -c "[ \"\$(cat '$OUT/devbadclient.status')\" = 1 ] &&
+	grep -q 'the device code request failed: invalid_request: AADSTS50059' '$OUT/devbadclient.err' &&
+	[ \"\$(grep -c 'check the client ID, the client secret' '$OUT/devbadclient.err')\" = 1 ]"
+env -u BROWSER PATH="$OUT/bin-none" XDG_CONFIG_HOME="$OUT/config" "$TOOL" --system-config "$CONFIG" --no-user-config \
+	--ca-file "$OUT/cert.pem" device --provider mockdev --tenant forever --token-file "$OUT/devint.json" user@example.org \
+	> "$OUT/devint.out" 2> "$OUT/devint.err" &
+TOOLPID=$!
+sleep 1.5
+kill -INT $TOOLPID
+wait $TOOLPID
+echo $? > "$OUT/devint.status"
+check "device: Ctrl-C cancels the wait" sh -c "[ \"\$(cat '$OUT/devint.status')\" = 1 ] && grep -q 'cancelled' '$OUT/devint.err'"
+run devnone none bin-none device user@example.org
+check "device: a provider without device code: exit 2, login suggested" sh -c "[ \"\$(cat '$OUT/devnone.status')\" = 2 ] &&
+	grep -q 'Mock offers no device code sign-in .*use oauth2-tool login' '$OUT/devnone.err'"
 
 echo
 if [ $failed -ne 0 ]; then
