@@ -14,6 +14,7 @@
 
 #include "oauth2/Encoding.h"
 #include "oauth2/Identity.h"
+#include "oauth2/Listener.h"
 #include "oauth2/Paths.h"
 #include "oauth2/Permissions.h"
 #include "oauth2/Pkce.h"
@@ -1124,6 +1125,63 @@ void TestTokenEndpointOf()
 	CHECK(e.client_secret == "cs");
 }
 
+
+// The browser's redirect (task 1.5; also the pasted URL of task 6.2)
+void TestInterpretRedirect()
+{
+	using Outcome = oauth2::RedirectResult::Outcome;
+	const std::string state = "s-123";
+
+	oauth2::RedirectResult r = oauth2::InterpretRedirect({ {"code", "c1"}, {"state", state}, {"scope", "a b"} }, state);
+	CHECK(r.outcome == Outcome::Code && r.code == "c1");
+	CHECK(r.params.size() == 3);
+	CHECK(r.message.find("c1") == std::string::npos);
+
+	r = oauth2::InterpretRedirect({ {"error", "access_denied"}, {"error_description", "no\tway"}, {"state", state} }, state);
+	CHECK(r.outcome == Outcome::Error && r.error == "access_denied" && r.error_description == "no way");
+	CHECK(r.message == "the provider did not grant access: access_denied: no way");
+	// An error wins over a code
+	r = oauth2::InterpretRedirect({ {"code", "c1"}, {"error", "server_error"}, {"state", state} }, state);
+	CHECK(r.outcome == Outcome::Error && r.code.empty());
+
+	// Refused: the listener keeps waiting
+	r = oauth2::InterpretRedirect({ {"code", "c1"}, {"state", "s-124"} }, state);
+	CHECK(r.outcome == Outcome::None && r.code.empty() && r.message.find("wrong state") == 0);
+	CHECK(oauth2::InterpretRedirect({ {"code", "c1"}, {"state", "s-12"} }, state).outcome == Outcome::None);
+	CHECK(oauth2::InterpretRedirect({ {"code", "c1"} }, state).message == "no state in the redirect");
+	CHECK(oauth2::InterpretRedirect({ {"error", "x"} }, state).outcome == Outcome::None);
+	CHECK(oauth2::InterpretRedirect({ {"code", "c1"}, {"state", ""} }, "").message == "no state was expected");
+	CHECK(oauth2::InterpretRedirect({ {"state", state} }, state).message == "neither a code nor an error in the redirect");
+	CHECK(oauth2::InterpretRedirect({ {"code", ""}, {"state", state} }, state).outcome == Outcome::None);
+	for (const char* name : { "code", "state", "error", "error_description", "error_uri" })
+	{
+		oauth2::Params params = { {"code", "c1"}, {"state", state}, {name, "one"}, {name, "two"} };
+		if (std::string(name) == "code" || std::string(name) == "state")
+			params.pop_back();
+		r = oauth2::InterpretRedirect(params, state);
+		CHECK(r.outcome == Outcome::None && r.message == std::string("parameter \"") + name + "\" given twice");
+	}
+	// Other parameters may repeat
+	CHECK(oauth2::InterpretRedirect({ {"code", "c1"}, {"state", state}, {"x", "1"}, {"x", "2"} }, state).outcome == Outcome::Code);
+
+	CHECK(std::string(oauth2::OutcomeName(Outcome::Cancelled)) == "cancelled");
+	CHECK(oauth2::IsLoopbackRedirect("http://127.0.0.1"));
+	CHECK(oauth2::IsLoopbackRedirect("http://localhost/cb"));
+	CHECK(oauth2::IsLoopbackRedirect("http://[::1]/a/b"));
+	CHECK(!oauth2::IsLoopbackRedirect("http://127.0.0.1:80"));
+	CHECK(!oauth2::IsLoopbackRedirect("http://127.0.0.1?x"));
+	CHECK(!oauth2::IsLoopbackRedirect("http://localhost.example.org"));
+	CHECK(!oauth2::IsLoopbackRedirect("https://localhost"));
+
+	// Open() refuses anything else, without opening a socket
+	oauth2::LoopbackListener listener;
+	std::string error;
+	CHECK(!listener.Open("http://example.org/", error));
+	CHECK(error == "not a loopback redirect: \"http://example.org/\"");
+	CHECK(listener.RedirectUri().empty() && listener.Port() == 0);
+	CHECK(listener.Wait(state, oauth2::ListenerSettings()).outcome == Outcome::Failed);
+}
+
 } // namespace
 
 int main()
@@ -1143,6 +1201,7 @@ int main()
 	TestPermissions();
 	TestPaths();
 	TestRedirectRules();
+	TestInterpretRedirect();
 	TestTokenResponse();
 	TestTokenRotation();
 	TestTokenLog();

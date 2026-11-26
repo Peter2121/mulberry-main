@@ -167,6 +167,7 @@ Libraries/OAuth2/libOAuth2.a
 Libraries/OAuth2/oauth2-tool
 Libraries/OAuth2/oauth2-unit
 Libraries/OAuth2/oauth2-token-driver
+Libraries/OAuth2/oauth2-listener-driver
 
 # Build artifacts
 Linux/Includes/

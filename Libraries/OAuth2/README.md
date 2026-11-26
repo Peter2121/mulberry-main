@@ -25,6 +25,7 @@ of the repository.
 | `tools/oauth2-tool.cpp` | command-line test tool |
 | `tests/unit.cpp` | offline unit tests (`oauth2-unit`) |
 | `tests/token-*` | token client tests: mock token endpoint (`token-server.py`), driver (`oauth2-token-driver`), script (`token-tests.sh`) |
+| `tests/listener-*` | loopback listener tests: driver (`oauth2-listener-driver`), script with curl as the browser (`listener-tests.sh`) |
 
 ## Interface so far
 
@@ -41,6 +42,7 @@ of the repository.
 | `Provider.h` | `oauth2::Provider`, `AccountSettings`, `WithAccountSettings()` |
 | `ProviderConfig.h` | loading, strict checks and merging of the provider files; lookup by id, server name and e-mail domain |
 | `Http.h` | `HttpSettings`: user agent, time and size limits, log callback, cancellation |
+| `Listener.h` | `LoopbackListener` (the browser's redirect), `InterpretRedirect()`, `IsLoopbackRedirect()` |
 | `TokenClient.h` | `ExchangeCode()`, `RefreshToken()`, `RequestToken()`; `TokenResponse`, `TokenError`; `Tokens` and `UpdateTokens()` (refresh-token rotation) |
 
 ## Provider configuration files
@@ -145,6 +147,36 @@ there is one. They block; call them off the UI thread.
   form values, JSON values, `Authorization` and cookie headers redacted.
   An answer that is not JSON is logged as its size only.
 
+## Loopback listener
+
+`LoopbackListener::Open(provider.redirect)` listens on an ephemeral port:
+on 127.0.0.1 for `http://127.0.0.1`, on [::1] for `http://[::1]`, and on
+both with the same port for `http://localhost` (127.0.0.1 only if the
+machine has no IPv6 loopback). `RedirectUri()` (`http://localhost:PORT/cb`)
+then goes into the authorization request and the code exchange.
+
+`Wait(state, settings)` serves HTTP/1.1 requests until the redirect:
+
+- **The redirect:** `GET` on the redirect's path (`/` without one), with
+  exactly one `Host` header naming the redirect's host and port, and
+  the expected `state` (compared in constant time) with a `code` or an
+  `error`. `code`, `state`, `error`, `error_description` and `error_uri`
+  may appear only once. It gets a short page with the application name, then
+  every socket is closed.
+- **Anything else** gets 400, 404, 405 or 431, and the listener keeps
+  waiting: the favicon, another path or method, a wrong or missing state, a
+  foreign `Host` (DNS rebinding), a request over 8 KiB.
+- **Limits:** 5 minutes in all (`ListenerSettings::timeout`), cancellation
+  from another thread, 10 s for a connection to send its request, 16
+  connections at once (an idle one does not block the others).
+- **Pages:** `Cache-Control: no-store`, `Referrer-Policy: no-referrer`, a
+  `Content-Security-Policy` that allows no loading, nothing but escaped text.
+- **Log:** request lines with `code` and `state` redacted, and why a request
+  was refused.
+
+The sockets are close-on-exec, so the browser started by the application
+does not inherit them.
+
 ## oauth2-tool
 
 ```sh
@@ -170,7 +202,7 @@ gmake -C Libraries/OAuth2 check    # unit and mock-server tests, no network, no 
 Libraries/OAuth2/oauth2-tool --version
 ```
 
-`check` needs Python 3 for the mock token endpoint (127.0.0.1 only) and
-`openssl` for its TLS case (skipped without it); the details of the token
-tests are in `obj/tests/token/`. `oauth2-tool` and the test programs stay in
+`check` needs Python 3 for the mock token endpoint (127.0.0.1 only),
+`openssl` for its TLS case (skipped without it), and curl for the listener
+tests; their details are in `obj/tests/token/` and `obj/tests/listener/`. `oauth2-tool` and the test programs stay in
 the build tree; they are not installed (decision D7 of the plan).

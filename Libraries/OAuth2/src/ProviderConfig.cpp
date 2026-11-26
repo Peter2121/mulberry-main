@@ -10,6 +10,7 @@
 
 #include "oauth2/ProviderConfig.h"
 
+#include "oauth2/Listener.h"
 #include "oauth2/Paths.h"
 #include "JsonIndex.h"
 
@@ -273,31 +274,6 @@ bool IsHttpsUrl(std::string url)
 			return false;
 	}
 	return true;
-}
-
-// http://127.0.0.1, http://localhost or http://[::1], no port, optional path
-bool IsLoopbackRedirect(const std::string& redirect)
-{
-	static const char* const cBases[] = { "http://127.0.0.1", "http://localhost", "http://[::1]" };
-	for (const char* base : cBases)
-	{
-		const size_t length = std::strlen(base);
-		if (redirect.compare(0, length, base) != 0)
-			continue;
-		const std::string path = redirect.substr(length);
-		if (path.empty())
-			return true;
-		if (path[0] != '/')
-			return false;
-		for (char c : path)
-		{
-			if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
-				c == '-' || c == '.' || c == '_' || c == '~' || c == '/'))
-				return false;
-		}
-		return true;
-	}
-	return false;
 }
 
 // RFC 6749 section 3.3: scope-token = 1*( %x21 / %x23-5B / %x5D-7E )
