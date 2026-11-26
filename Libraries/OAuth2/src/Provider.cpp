@@ -20,6 +20,35 @@ const char* const cScopeMail = "mail";
 const char* const cScopeCalendar = "calendar";
 const char* const cScopeContacts = "contacts";
 
+const char* const cClientIdUuid = "uuid";
+
+const char* const cClientCheckToken = "token";
+const char* const cClientCheckDevice = "device_authorization";
+
+namespace
+{
+
+// xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx, hexadecimal digits of either case
+bool IsUuid(const std::string& text)
+{
+	if (text.size() != 36)
+		return false;
+	for (size_t i = 0; i < text.size(); ++i)
+	{
+		const char c = text[i];
+		if (i == 8 || i == 13 || i == 18 || i == 23)
+		{
+			if (c != '-')
+				return false;
+		}
+		else if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')))
+			return false;
+	}
+	return true;
+}
+
+} // namespace
+
 std::string Provider::ResolveEndpoint(const std::string& endpoint) const
 {
 	static const std::string cPlaceholder = "{tenant}";
@@ -63,6 +92,18 @@ Provider WithAccountSettings(const Provider& provider, const AccountSettings& se
 	if (!settings.tenant.empty())
 		result.tenant = settings.tenant;
 	return result;
+}
+
+bool CheckClientIdFormat(const Provider& provider, std::string& error)
+{
+	if (provider.client_id.empty() || provider.client_id_format != cClientIdUuid ||
+		IsUuid(provider.client_id))
+		return true;
+	// The value is not repeated: a secret pasted into the wrong field would
+	// be shown
+	error = "the client ID (" + std::to_string(provider.client_id.size()) + " characters) is not in " +
+		provider.name + "'s form xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx (hexadecimal digits)";
+	return false;
 }
 
 } // namespace oauth2

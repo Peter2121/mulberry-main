@@ -33,6 +33,9 @@ typedef nlohmann::ordered_json Json;
 // Longest error description kept in messages, in bytes
 const size_t cMaxDescription = 300;
 
+// The code of ProbeClient(): no provider issues codes of this form
+const char* const cProbeCode = "invalid-code-for-the-client-check";
+
 bool EqualsNoCase(const std::string& a, const std::string& b)
 {
 	if (a.size() != b.size())
@@ -158,6 +161,35 @@ void SetError(TokenError& error, TokenError::Kind kind, const std::string& messa
 {
 	error.kind = kind;
 	error.message = message;
+}
+
+// A POST that brought no usable answer; what: "token endpoint"...,
+// request: "token request"...
+void SetTransportError(TokenError& error, const HttpResult& result, const std::string& what,
+	const std::string& request)
+{
+	switch (result.outcome)
+	{
+	case HttpResult::Outcome::RedirectRefused:
+		SetError(error, TokenError::Kind::Http, what + ": " + result.error);
+		error.http_status = result.status;
+		break;
+	case HttpResult::Outcome::BadUrl:
+		SetError(error, TokenError::Kind::Config, what + ": " + result.error);
+		break;
+	case HttpResult::Outcome::Timeout:
+		SetError(error, TokenError::Kind::Timeout, what + ": " + result.error);
+		break;
+	case HttpResult::Outcome::TooLarge:
+		SetError(error, TokenError::Kind::Protocol, what + ": " + result.error);
+		break;
+	case HttpResult::Outcome::Cancelled:
+		SetError(error, TokenError::Kind::Cancelled, request + " cancelled");
+		break;
+	default:
+		SetError(error, TokenError::Kind::Network, what + ": " + result.error);
+		break;
+	}
 }
 
 std::string DescribeBody(const std::string& content_type, const std::string& body)
@@ -386,28 +418,7 @@ bool RequestToken(const TokenEndpoint& endpoint, const Params& grant,
 	HttpResult result;
 	if (!PostForm(endpoint.url, form, endpoint.redirect_domains, settings, result))
 	{
-		switch (result.outcome)
-		{
-		case HttpResult::Outcome::RedirectRefused:
-			SetError(error, TokenError::Kind::Http, "token endpoint: " + result.error);
-			error.http_status = result.status;
-			break;
-		case HttpResult::Outcome::BadUrl:
-			SetError(error, TokenError::Kind::Config, "token endpoint: " + result.error);
-			break;
-		case HttpResult::Outcome::Timeout:
-			SetError(error, TokenError::Kind::Timeout, "token endpoint: " + result.error);
-			break;
-		case HttpResult::Outcome::TooLarge:
-			SetError(error, TokenError::Kind::Protocol, "token endpoint: " + result.error);
-			break;
-		case HttpResult::Outcome::Cancelled:
-			SetError(error, TokenError::Kind::Cancelled, "token request cancelled");
-			break;
-		default:
-			SetError(error, TokenError::Kind::Network, "token endpoint: " + result.error);
-			break;
-		}
+		SetTransportError(error, result, "token endpoint", "token request");
 		return false;
 	}
 
@@ -453,6 +464,97 @@ bool ExchangeCode(const TokenEndpoint& endpoint, const std::string& code,
 	if (!code_verifier.empty())
 		grant.emplace_back("code_verifier", code_verifier);
 	return RequestToken(endpoint, grant, settings, response, error);
+}
+
+namespace
+{
+
+// client_check "token"
+bool ProbeWithCode(const Provider& provider, const std::string& redirect_uri,
+	const HttpSettings& settings, TokenError& error)
+{
+	if (settings.log)
+		settings.log("* checking the client registration with an invalid code");
+	TokenResponse response;
+	if (ExchangeCode(TokenEndpointOf(provider), cProbeCode, MakePkce().verifier, redirect_uri, settings,
+		response, error))
+	{
+		// Accepted: impossible with a real server, harmless anyway
+		error = TokenError();
+		return true;
+	}
+	switch (error.kind)
+	{
+	case TokenError::Kind::OAuth:
+		return !error.IsClientProblem();
+	case TokenError::Kind::Http:
+	case TokenError::Kind::Protocol:
+		return true;
+	default:
+		return false;
+	}
+}
+
+// client_check "device_authorization" (RFC 8628 section 3.1).  Microsoft
+// answers a client it does not know with unauthorized_client AADSTS700016
+// ("application not found": /consumers, a tenant) or with invalid_request
+// AADSTS50059 ("no tenant-identifying information": /common and
+// /organizations, where only the application would tell the tenant).  The
+// secret is not sent: the request only has to name the client.
+bool ProbeWithDeviceCode(const Provider& provider, const std::vector<std::string>& scopes,
+	const HttpSettings& settings, TokenError& error)
+{
+	error = TokenError();
+	const auto log = [&settings](const std::string& line) { if (settings.log) settings.log(line); };
+	log("* checking the client registration with a device code request (the code is not used)");
+	if (provider.client_id.empty())
+	{
+		SetError(error, TokenError::Kind::Config, "no client ID for this provider");
+		return false;
+	}
+
+	Params form = { {"client_id", provider.client_id} };
+	if (!scopes.empty())
+		form.emplace_back("scope", JoinWords(scopes));
+	HttpResult result;
+	if (!PostForm(provider.ResolveEndpoint(provider.device_authorization_endpoint), form,
+		provider.redirect_domains, settings, result))
+	{
+		SetTransportError(error, result, "device authorization endpoint", "device code request");
+		return false;
+	}
+	if (!result.body.empty())
+		log("< " + RedactJsonBody(result.body));
+
+	// A device code: the provider knows the client
+	if (result.status == 200)
+		return true;
+
+	TokenResponse response;
+	if (ParseTokenResponse(result.status, result.content_type, result.body, std::time(nullptr), response,
+		error))
+	{
+		error = TokenError();
+		return true;
+	}
+	if (error.kind == TokenError::Kind::OAuth &&
+		(error.IsClientProblem() || error.aadsts == 50059 || error.aadsts == 700016))
+	{
+		error.message = "the provider does not know this client ID (" + error.message + ")";
+		return false;
+	}
+	// Another refusal (a scope, a disabled device flow...): not the client's
+	return true;
+}
+
+} // namespace
+
+bool ProbeClient(const Provider& provider, const std::vector<std::string>& scopes,
+	const std::string& redirect_uri, const HttpSettings& settings, TokenError& error)
+{
+	if (provider.client_check == cClientCheckDevice && provider.SupportsDeviceCode())
+		return ProbeWithDeviceCode(provider, scopes, settings, error);
+	return ProbeWithCode(provider, redirect_uri, settings, error);
 }
 
 bool RefreshToken(const TokenEndpoint& endpoint, const std::string& refresh_token,

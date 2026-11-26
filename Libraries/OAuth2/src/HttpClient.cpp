@@ -246,6 +246,8 @@ bool PostOnce(const std::string& url, const std::string& body, const std::string
 	curl_easy_setopt(easy, CURLOPT_FOLLOWLOCATION, 0L);
 	curl_easy_setopt(easy, CURLOPT_SSL_VERIFYPEER, 1L);
 	curl_easy_setopt(easy, CURLOPT_SSL_VERIFYHOST, 2L);
+	if (!settings.ca_file.empty())
+		curl_easy_setopt(easy, CURLOPT_CAINFO, settings.ca_file.c_str());
 	curl_easy_setopt(easy, CURLOPT_NETRC, (long) CURL_NETRC_IGNORED);
 	// The cookie engine stays off (no CURLOPT_COOKIEFILE)
 	if (loopback)

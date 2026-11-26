@@ -49,7 +49,7 @@ TOOL_CPPFLAGS = -DOAUTH2_TOOL_APP_ID='"$(APP_ID)"' \
 
 LIBRARY = libOAuth2$A
 SOURCES = Identity Version Encoding Random Pkce Redact Paths Permissions Provider \
-	ProviderConfig JsonIndex HttpClient TokenClient Listener
+	ProviderConfig JsonIndex HttpClient TokenClient Listener Authorization IdToken Browser
 OBJS = $(SOURCES:%=obj/%$O)
 
 CONFDIR = $(DESTDIR)$(SYSCONFDIR)/$(APP_ID)
@@ -98,7 +98,9 @@ $(LISTENER): obj/tests/listener-driver$O $(LIBRARY)
 # tool validates the shipped system file as the application would; the
 # token client runs against a mock server on 127.0.0.1 (Python 3, output in
 # obj/tests/token/); the loopback listener is tested with curl as the
-# browser (output in obj/tests/listener/).
+# browser (output in obj/tests/listener/); oauth2-tool login and refresh run
+# against the mock server over TLS, with a fake xdg-open and browser
+# (output in obj/tests/login/).
 check: all $(UNIT) $(DRIVER) $(LISTENER)
 	./$(UNIT)
 	./$(TOOL) --version
@@ -106,6 +108,7 @@ check: all $(UNIT) $(DRIVER) $(LISTENER)
 	@echo "data/$(PROVIDER_FILE): valid"
 	sh tests/token-tests.sh ./$(DRIVER) tests obj/tests/token
 	sh tests/listener-tests.sh ./$(LISTENER) obj/tests/listener
+	sh tests/login-tests.sh ./$(TOOL) tests obj/tests/login
 
 # The system provider file (OAUTH2-PLAN.md, section 7); oauth2-tool stays in
 # the build tree (decision D7)

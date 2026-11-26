@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 #
-# Mock OAuth2 token endpoint for the token client tests (token-tests.sh):
-# one route per case, and a log of each request (path, headers, form).
+# Mock OAuth2 token endpoint for the token client tests (token-tests.sh)
+# and the login tests of oauth2-tool (login-tests.sh): one route per case,
+# and a log of each request (path, headers, form).
 #
 # Usage: token-server.py LOGFILE PORTFILE [CERTFILE KEYFILE]
 #
@@ -11,9 +12,11 @@
 # Every secret it issues or expects contains "S3CR3T", so that the tests can
 # check that none reaches the client's log or output.
 
+import base64
 import http.server
 import json
 import os
+import re
 import ssl
 import sys
 import threading
@@ -27,7 +30,12 @@ KEY = sys.argv[4] if len(sys.argv) > 4 else None
 CLIENT_ID = 'test-client'
 CLIENT_SECRET = 'S3CR3T-client-secret'
 CODE = 'S3CR3T-code-1'
+# Other codes of this form are accepted once each (login-tests.sh)
+CODE_PREFIX = 'S3CR3T-code-'
 REDIRECT = 'http://127.0.0.1/callback'
+# The redirect with the listener's port (RFC 8252 section 7.3)
+REDIRECT_WITH_PORT = re.compile(r'http://127\.0\.0\.1:[0-9]+/callback')
+EMAIL = 'user@example.org'
 
 lock = threading.Lock()
 codes_used = set()
@@ -39,6 +47,19 @@ rotated_out = set()
 counter = [1]
 
 
+def b64url(data):
+    return base64.urlsafe_b64encode(json.dumps(data).encode()).rstrip(b'=').decode()
+
+
+def id_token(number):
+    # A JWT with an unverifiable signature (the client does not check it:
+    # the token comes from the token endpoint over TLS)
+    now = int(time.time())
+    claims = {'iss': 'https://mock.example', 'sub': '1001', 'aud': CLIENT_ID, 'email': EMAIL,
+              'email_verified': True, 'name': 'Test User', 'iat': now, 'exp': now + 3600}
+    return '%s.%s.S3CR3T-signature-%d' % (b64url({'alg': 'RS256', 'typ': 'JWT'}), b64url(claims), number)
+
+
 def tokens(refresh=None, scope='openid email https://mail.example/'):
     counter[0] += 1
     answer = {
@@ -46,7 +67,7 @@ def tokens(refresh=None, scope='openid email https://mail.example/'):
         'token_type': 'Bearer',
         'expires_in': 3599,
         'scope': scope,
-        'id_token': 'S3CR3T.idtoken.%d' % counter[0],
+        'id_token': id_token(counter[0]),
     }
     if refresh:
         answer['refresh_token'] = refresh
@@ -133,6 +154,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         try:
             if route == '/token':
                 self.token(form)
+            elif route == '/devicecode':
+                self.devicecode(form)
             elif route == '/google-rapt':
                 self.send(400, GOOGLE_RAPT)
             elif route == '/ms-invalid-client':
@@ -182,6 +205,26 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             pass
 
+    # Device code request, as Microsoft answers it (client check of
+    # login-tests.sh): a code for CLIENT_ID, AADSTS700016 for
+    # "not-found-client", AADSTS50059 for any other client (/common)
+    def devicecode(self, form):
+        if 'client_secret' in form:
+            return self.error(400, 'invalid_request', 'no client secret expected')
+        client = form.get('client_id')
+        if client == CLIENT_ID:
+            return self.send(200, {'device_code': 'S3CR3T-device-code', 'user_code': 'ABCD-EFGH',
+                                   'verification_uri': 'https://127.0.0.1/device', 'expires_in': 900,
+                                   'interval': 5, 'message': 'Not used'})
+        if client == 'not-found-client':
+            return self.send(400, {'error': 'unauthorized_client', 'error_codes': [700016],
+                                   'error_description': "AADSTS700016: Application with identifier "
+                                   "'not-found-client' was not found in the directory 'Mock'.\r\n"
+                                   "Trace ID: t\r\nCorrelation ID: c"})
+        self.send(400, {'error': 'invalid_request', 'error_codes': [50059],
+                        'error_description': 'AADSTS50059: No tenant-identifying information found in '
+                        'either the request or implied by any provided credentials.\r\nTrace ID: t'})
+
     def token(self, form):
         if self.headers.get('Content-Type', '') != 'application/x-www-form-urlencoded':
             return self.error(400, 'invalid_request', 'form expected')
@@ -194,21 +237,26 @@ class Handler(http.server.BaseHTTPRequestHandler):
         with lock:
             if grant == 'authorization_code':
                 verifier = form.get('code_verifier', '')
-                if form.get('code') != CODE or CODE in codes_used:
+                code = form.get('code', '')
+                if not code.startswith(CODE_PREFIX) or code in codes_used:
                     return self.error(400, 'invalid_grant', 'code unknown or already used')
-                if form.get('redirect_uri') != REDIRECT:
+                redirect = form.get('redirect_uri', '')
+                if redirect != REDIRECT and not REDIRECT_WITH_PORT.fullmatch(redirect):
                     return self.error(400, 'invalid_grant', 'redirect_uri mismatch')
                 if not 43 <= len(verifier) <= 128:
                     return self.error(400, 'invalid_grant', 'code_verifier missing or invalid')
-                codes_used.add(CODE)
-                return self.send(200, tokens('S3CR3T-refresh-1'), extra=cookie)
+                codes_used.add(code)
+                # The first code keeps the token the token tests expect
+                refresh = 'S3CR3T-refresh-1' if code == CODE else 'S3CR3T-refresh-for-' + code[len(CODE_PREFIX):]
+                rotating.add(refresh)
+                return self.send(200, tokens(refresh), extra=cookie)
             if grant == 'refresh_token':
                 token = form.get('refresh_token', '')
                 if token in rotating:
                     # Rotation: a new refresh token, the old one is dead
                     rotating.discard(token)
                     rotated_out.add(token)
-                    new = 'S3CR3T-refresh-2'
+                    new = 'S3CR3T-refresh-2' if token == 'S3CR3T-refresh-1' else token + '-rotated'
                     stable.add(new)
                     scope = form.get('scope', 'openid email https://mail.example/')
                     return self.send(200, tokens(new, scope), extra=cookie)

@@ -44,6 +44,10 @@ struct HttpSettings
 	// localhost (local mock server).  Proxies are never used for these.
 	bool allow_http_loopback = false;
 
+	// Certificate authorities (PEM file) instead of the system's, for a
+	// local test server or a company proxy; empty: the system's
+	std::string ca_file;
+
 	LogFunction log;							// none: no log
 
 	// Set to true by another thread to stop the request (reported as

@@ -535,7 +535,7 @@ What this shows:
 | Task | G | MP | MW | Y | Date | Notes |
 |---|---|---|---|---|---|---|
 | 0.5 baseline | | | | | | |
-| 1.6 login | | | | | | |
+| 1.6 login | ✓ | ✓ | later | — | 26/11/2026 | G: login, calendar unticked shown as "not granted", refresh (calendar left out, refresh token unchanged), wrong client ID refused before the browser (`invalid_client`). One unexplained Google `invalid_request` (only "flowName=GeneralOAuthFlow") on the first try; the identical retry worked (`tests/google-error-decode.sh` reads the reason if it recurs). MP: login, refresh (refresh token replaced each time). Microsoft checks the code before the client, so the invalid-code check let a wrong client ID through: fixed with `client_id_format` (offline) and `client_check` "device_authorization" (AADSTS50059/700016), then passed. Y: stage 7 |
 | 1.7 device | — | | | — | | |
 | 1.8 imap/smtp-check | | | | | | |
 | 3.4 sign-in in Mulberry | | | | | | |

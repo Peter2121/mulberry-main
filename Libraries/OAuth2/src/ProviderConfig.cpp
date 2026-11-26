@@ -319,7 +319,7 @@ const std::vector<std::string>& ProviderKeys()
 	static const std::vector<std::string> cKeys = { "name", "enabled", "hosts", "domains",
 		"authorization_endpoint", "token_endpoint", "device_authorization_endpoint",
 		"revocation_endpoint", "redirect_domains", "scopes", "authorization_params", "redirect", "pkce", "sasl",
-		"client_id", "client_secret", "tenant" };
+		"client_id", "client_secret", "tenant", "client_id_format", "client_check" };
 	return cKeys;
 }
 
@@ -471,6 +471,17 @@ private:
 			{
 				if (!value.is_string() || !IsTenant(value.get<std::string>()))
 					AtValue(child, what + " must be a string of letters, digits, '-' and '.'");
+			}
+			else if (key == "client_id_format")
+			{
+				if (!value.is_string() || value.get<std::string>() != cClientIdUuid)
+					AtValue(child, what + " must be \"uuid\"");
+			}
+			else if (key == "client_check")
+			{
+				if (!value.is_string() || (value.get<std::string>() != cClientCheckToken &&
+					value.get<std::string>() != cClientCheckDevice))
+					AtValue(child, what + " must be \"token\" or \"device_authorization\"");
 			}
 			else
 				AtKey(child, "unknown key \"" + key + "\" in provider \"" + id + "\" (known keys: " +
@@ -763,6 +774,8 @@ Provider ToProvider(const Merged& merged)
 	p.client_id = o.value("client_id", std::string());
 	p.client_secret = o.value("client_secret", std::string());
 	p.tenant = o.value("tenant", std::string());
+	p.client_id_format = o.value("client_id_format", std::string());
+	p.client_check = o.value("client_check", std::string(cClientCheckToken));
 	return p;
 }
 
@@ -809,6 +822,13 @@ bool CheckMerged(const std::vector<Merged>& merged, ConfigError& error)
 		{
 			SetMergedError(error, m, "", "provider \"" + m.id +
 				"\" has endpoints with {tenant} but no \"tenant\"");
+			return false;
+		}
+		if (p.client_check == cClientCheckDevice && p.device_authorization_endpoint.empty())
+		{
+			SetMergedError(error, m, "client_check", "provider \"" + m.id +
+				"\" checks its client with \"device_authorization\" but has no "
+				"\"device_authorization_endpoint\"");
 			return false;
 		}
 		for (const std::string& host : p.hosts)

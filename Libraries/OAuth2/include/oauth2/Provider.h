@@ -30,6 +30,13 @@ extern const char* const cScopeMail;		// "mail"
 extern const char* const cScopeCalendar;	// "calendar"
 extern const char* const cScopeContacts;	// "contacts"
 
+// Values of Provider::client_id_format
+extern const char* const cClientIdUuid;		// "uuid"
+
+// Values of Provider::client_check
+extern const char* const cClientCheckToken;	// "token"
+extern const char* const cClientCheckDevice;	// "device_authorization"
+
 struct Provider
 {
 	std::string id;			// "google": the key in the "providers" object
@@ -73,6 +80,16 @@ struct Provider
 	std::string client_secret;
 	std::string tenant;
 
+	// Form of every client ID of the provider, checked offline; "uuid":
+	// xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx (Microsoft); empty: any
+	std::string client_id_format;
+
+	// How ProbeClient() checks the registration before the browser opens:
+	// "token" (an exchange with an invalid code) or "device_authorization"
+	// (a device code request, whose code is not used: Microsoft checks a
+	// code before the client)
+	std::string client_check = cClientCheckToken;
+
 	bool SupportsDeviceCode() const { return !device_authorization_endpoint.empty(); }
 
 	// The endpoint with "{tenant}" replaced
@@ -93,6 +110,11 @@ struct AccountSettings
 };
 
 Provider WithAccountSettings(const Provider& provider, const AccountSettings& settings);
+
+// Whether the client ID has the provider's client_id_format.  False, with a
+// readable error, when it does not; true when there is no format or no
+// client ID.
+bool CheckClientIdFormat(const Provider& provider, std::string& error);
 
 } // namespace oauth2
 

@@ -108,6 +108,29 @@ bool ExchangeCode(const TokenEndpoint& endpoint, const std::string& code,
 	const std::string& code_verifier, const std::string& redirect_uri,
 	const HttpSettings& settings, TokenResponse& response, TokenError& error);
 
+// Checks the registration before the user is sent to the browser, where a
+// wrong client ID or secret would only show up after the sign-in, or as a
+// provider's error page that never comes back to the listener.  Apply the
+// account's own settings first (WithAccountSettings()).  By the provider's
+// client_check:
+//
+// - "token": an authorization-code exchange with an invalid code.  The
+//   provider answers invalid_client or unauthorized_client for a wrong
+//   registration, and invalid_grant (or another error) for a good one.
+// - "device_authorization": a device code request with the client ID and
+//   scopes (not the secret), for a provider that checks the code before the
+//   client (Microsoft: invalid_grant AADSTS9002313 for any client).  A
+//   device code means a good client; it is not used and expires.  Microsoft
+//   AADSTS50059 and AADSTS700016 mean an unknown client, as do
+//   invalid_client and unauthorized_client.  The secret is not checked.
+//
+// False, with error, when the provider refuses the client or cannot be
+// reached (network, timeout, configuration, cancelled): the sign-in would
+// fail anyway.  error.kind is then OAuth only for a refused client.  True
+// for any other answer, with error holding it (for the log).
+bool ProbeClient(const Provider& provider, const std::vector<std::string>& scopes,
+	const std::string& redirect_uri, const HttpSettings& settings, TokenError& error);
+
 // grant_type=refresh_token.  scopes: sent as "scope" when not empty
 // (Microsoft expects it).
 bool RefreshToken(const TokenEndpoint& endpoint, const std::string& refresh_token,

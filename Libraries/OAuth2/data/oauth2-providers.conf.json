@@ -3,7 +3,7 @@
   "version": 1,
   "providers": {
     "google": {
-      "_comment": "Checked 2026-11-25 (docs/oauth2/register-google.md). No client ID: each user registers one (decision D9). Google offers no device code for mail scopes.",
+      "_comment": "Checked 2026-11-25 (docs/oauth2/register-google.md). No client ID: each user registers one (decision D9). Google offers no device code for mail scopes. prompt=consent: Google issues a refresh token only when its consent screen is shown, and a browser sign-in happens only when one is needed.",
       "name": "Google",
       "hosts": ["imap.gmail.com", "smtp.gmail.com", "pop.gmail.com",
                 "apidata.googleusercontent.com", "www.googleapis.com"],
@@ -18,7 +18,7 @@
         "calendar": ["https://www.googleapis.com/auth/calendar"],
         "contacts": ["https://www.googleapis.com/auth/carddav"]
       },
-      "authorization_params": { "access_type": "offline" },
+      "authorization_params": { "access_type": "offline", "prompt": "consent" },
       "redirect": "http://127.0.0.1",
       "pkce": true,
       "sasl": ["OAUTHBEARER", "XOAUTH2"],
@@ -26,7 +26,7 @@
       "client_secret": ""
     },
     "microsoft": {
-      "_comment": "Checked 2026-11-25 (docs/oauth2/register-microsoft.md). Outlook.com and Microsoft 365 mail; calendar and contacts need Graph (a later plan). Public client: no secret.",
+      "_comment": "Checked 2026-11-25 (docs/oauth2/register-microsoft.md). Outlook.com and Microsoft 365 mail; calendar and contacts need Graph (a later plan). Public client: no secret. client_check: the token endpoint checks a code before the client (AADSTS9002313 for any client), the device code endpoint does not (checked 2026-11-26).",
       "name": "Microsoft",
       "hosts": ["outlook.office365.com", "smtp.office365.com", "smtp-mail.outlook.com",
                 "outlook.office.com", "imap-mail.outlook.com", "pop-mail.outlook.com"],
@@ -46,6 +46,8 @@
       "pkce": true,
       "sasl": ["XOAUTH2"],
       "tenant": "common",
+      "client_id_format": "uuid",
+      "client_check": "device_authorization",
       "client_id": ""
     },
     "yahoo": {

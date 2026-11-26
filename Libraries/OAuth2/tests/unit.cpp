@@ -12,7 +12,9 @@
 // No network and no account are needed.  Each task of stage 1 of
 // OAUTH2-PLAN.md adds its tests here.
 
+#include "oauth2/Authorization.h"
 #include "oauth2/Encoding.h"
+#include "oauth2/IdToken.h"
 #include "oauth2/Identity.h"
 #include "oauth2/Listener.h"
 #include "oauth2/Paths.h"
@@ -418,6 +420,8 @@ void TestShippedFile()
 	const oauth2::Provider* google = config.Find("google");
 	CHECK(google && !google->SupportsDeviceCode());
 	CHECK(google && google->authorization_params.at("access_type") == "offline");
+	// A refresh token only comes with the consent screen (task 1.6)
+	CHECK(google && google->authorization_params.at("prompt") == "consent");
 	CHECK(google && google->ScopesFor({ oauth2::cScopeMail, oauth2::cScopeCalendar }) ==
 		std::vector<std::string>({ "openid", "email", "https://mail.google.com/",
 			"https://www.googleapis.com/auth/calendar" }));
@@ -428,6 +432,10 @@ void TestShippedFile()
 	CHECK(microsoft && microsoft->ResolveEndpoint(microsoft->token_endpoint) ==
 		"https://login.microsoftonline.com/common/oauth2/v2.0/token");
 	CHECK(microsoft && microsoft->redirect == "http://localhost");
+	// Its token endpoint checks a code before the client (task 1.6)
+	CHECK(microsoft && microsoft->client_check == oauth2::cClientCheckDevice);
+	CHECK(microsoft && microsoft->client_id_format == oauth2::cClientIdUuid);
+	CHECK(google && google->client_check == oauth2::cClientCheckToken && google->client_id_format.empty());
 	CHECK(microsoft && microsoft->ScopesFor({ oauth2::cScopeCalendar }) ==
 		std::vector<std::string>({ "offline_access", "openid", "email", "profile" }));
 
@@ -443,6 +451,48 @@ void TestShippedFile()
 		CHECK(p.ResolveEndpoint(p.authorization_endpoint) ==
 			"https://login.microsoftonline.com/contoso.onmicrosoft.com/oauth2/v2.0/authorize");
 	}
+}
+
+// client_id_format and client_check (task 1.6)
+void TestClientChecks()
+{
+	oauth2::ProviderConfig config;
+	oauth2::ConfigError error;
+	CHECK(config.LoadTexts("system.json", cSystem, "user.json",
+		R"({"version": 1, "providers": {"example": {"client_id_format": "uuid",)"
+		R"( "client_check": "device_authorization", "device_authorization_endpoint": "https://a.test/d"}}})",
+		error));
+	const oauth2::Provider* p = config.Find("example");
+	CHECK(p && p->client_id_format == "uuid" && p->client_check == "device_authorization");
+	CHECK(config.LoadTexts("system.json", cSystem, "", "", error));
+	p = config.Find("example");
+	CHECK(p && p->client_id_format.empty() && p->client_check == "token");
+
+	oauth2::Provider ms;
+	ms.name = "Microsoft";
+	ms.client_id_format = oauth2::cClientIdUuid;
+	std::string message;
+	for (const char* good : { "781465e6-6d7e-4788-95da-b70ee25bc2a5", "781465E6-6D7E-4788-95DA-B70EE25BC2A5", "" })
+	{
+		ms.client_id = good;
+		message.clear();
+		CHECK(oauth2::CheckClientIdFormat(ms, message) && message.empty());
+	}
+	for (const char* bad : { "wrong-id", "781465e6-6d7e-4788-95da-b70ee25bc2a", "781465e6-6d7e-4788-95da-b70ee25bc2a5 ",
+		"781465e66d7e-4788-95da-b70ee25bc2a5-", "781465g6-6d7e-4788-95da-b70ee25bc2a5",
+		"{781465e6-6d7e-4788-95da-b70ee25bc2a}", "S3CR3T~secret.pasted.as.the.client.id" })
+	{
+		ms.client_id = bad;
+		CHECK(!oauth2::CheckClientIdFormat(ms, message));
+		// The value is not repeated (a pasted secret)
+		CHECK(message.find(bad) == std::string::npos && message.find("S3CR3T") == std::string::npos);
+	}
+	ms.client_id = "wrong-id";
+	CHECK(oauth2::CheckClientIdFormat(ms, message) == false && message == "the client ID (8 characters) is not in "
+		"Microsoft's form xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx (hexadecimal digits)");
+	// No format: anything
+	ms.client_id_format.clear();
+	CHECK(oauth2::CheckClientIdFormat(ms, message));
 }
 
 void TestMerge()
@@ -591,6 +641,15 @@ void TestConfigErrors()
 		"server \"imap.example.com\" is listed by providers \"example\" and \"acme\"");
 	EXPECT_USER_ERROR("{\"version\": 1, \"providers\": {\"example\": {\"token_endpoint\": \"https://a.test/{tenant}/t\"}}}",
 		1, 30, "no \"tenant\"");
+
+	// The client checks (task 1.6): known values; a device code check needs
+	// a device endpoint
+	EXPECT_USER_ERROR("{\"version\": 1, \"providers\": {\"example\": {\"client_id_format\": \"guid\"}}}", 1, 62,
+		"\"client_id_format\" of provider \"example\" must be \"uuid\"");
+	EXPECT_USER_ERROR("{\"version\": 1, \"providers\": {\"example\": {\"client_check\": \"browser\"}}}", 1, 58,
+		"must be \"token\" or \"device_authorization\"");
+	EXPECT_USER_ERROR("{\"version\": 1, \"providers\": {\"example\": {\"client_check\": \"device_authorization\"}}}", 1, 42,
+		"checks its client with \"device_authorization\" but has no \"device_authorization_endpoint\"");
 
 	// An error in the system file names the system file
 	ExpectError("{\"version\": 1,\n \"providers\": {\"x\": {\"name\": \"X\"}}}", "{\"version\": 1}", "system.json",
@@ -1182,6 +1241,125 @@ void TestInterpretRedirect()
 	CHECK(listener.Wait(state, oauth2::ListenerSettings()).outcome == Outcome::Failed);
 }
 
+// The authorization request and the granted scopes (task 1.6)
+void TestAuthorizationUrl()
+{
+	oauth2::Provider p;
+	p.authorization_endpoint = "https://login.example/{tenant}/authorize";
+	p.tenant = "common";
+	p.client_id = "cid";
+	p.scopes = { {"always", {"openid", "email"}}, {"mail", {"https://mail.example/"}}, {"calendar", {"cal"}} };
+	p.authorization_params = { {"prompt", "consent"}, {"access_type", "offline"} };
+
+	oauth2::AuthorizationRequest r;
+	r.scopes = p.ScopesFor({ oauth2::cScopeMail });
+	r.redirect_uri = "http://127.0.0.1:5000/cb";
+	r.state = "st";
+	r.code_challenge = "ch";
+	r.login_hint = "a+b@x.org";
+	const std::string base = "https://login.example/common/authorize?response_type=code&client_id=cid"
+		"&redirect_uri=http%3A%2F%2F127.0.0.1%3A5000%2Fcb&scope=openid%20email%20https%3A%2F%2Fmail.example%2F"
+		"&state=st";
+	CHECK(oauth2::BuildAuthorizationUrl(p, r) == base +
+		"&code_challenge=ch&code_challenge_method=S256&login_hint=a%2Bb%40x.org&access_type=offline&prompt=consent");
+
+	// Overrides: removed, replaced, added in name order; the fixed ones stay
+	r.overrides = { {"prompt", ""}, {"state", "other"}, {"client_id", "x"}, {"login_hint", "y"} };
+	CHECK(oauth2::BuildAuthorizationUrl(p, r) == base +
+		"&code_challenge=ch&code_challenge_method=S256&login_hint=a%2Bb%40x.org&access_type=offline");
+	r.overrides = { {"prompt", "select_account"}, {"extra", "1 2"} };
+	CHECK(oauth2::BuildAuthorizationUrl(p, r) == base +
+		"&code_challenge=ch&code_challenge_method=S256&login_hint=a%2Bb%40x.org&access_type=offline&extra=1%202"
+		"&prompt=select_account");
+
+	// No PKCE, no login hint, no extra parameter; an endpoint with a query
+	r.overrides.clear();
+	r.login_hint.clear();
+	p.pkce = false;
+	p.authorization_params.clear();
+	CHECK(oauth2::BuildAuthorizationUrl(p, r) == base);
+	p.pkce = true;
+	r.code_challenge.clear();
+	CHECK(oauth2::BuildAuthorizationUrl(p, r) == base);
+	p.authorization_endpoint = "https://login.example/auth?tenant=x";
+	CHECK(oauth2::BuildAuthorizationUrl(p, r).find("https://login.example/auth?tenant=x&response_type=code&") == 0);
+
+	// Granted scopes: Google reports "email" as userinfo.email
+	const std::vector<std::string> requested = { "openid", "email", "https://mail.example/", "cal" };
+	const std::vector<std::string> granted = { "openid", "https://www.googleapis.com/auth/userinfo.email",
+		"https://mail.example/" };
+	CHECK(oauth2::MissingScopes(p, requested, true, granted) == std::vector<std::string>({ "cal" }));
+	CHECK(oauth2::MissingScopes(p, requested, false, granted).empty());
+	CHECK(oauth2::MissingScopes(p, requested, true, {}) ==
+		std::vector<std::string>({ "https://mail.example/", "cal" }));
+	CHECK(oauth2::RefreshScopes(p, requested, true, granted) ==
+		std::vector<std::string>({ "openid", "email", "https://mail.example/" }));
+	CHECK(oauth2::RefreshScopes(p, requested, false, {}) == requested);
+}
+
+std::string MakeJwt(const std::string& payload)
+{
+	return oauth2::Base64UrlEncode("{\"alg\":\"RS256\",\"typ\":\"JWT\"}") + "." +
+		oauth2::Base64UrlEncode(payload) + ".c2lnbmF0dXJl";
+}
+
+// ID token claims (task 1.6; account check of task 3.5)
+void TestIdToken()
+{
+	oauth2::IdTokenClaims c;
+	std::string error;
+	CHECK(oauth2::ParseIdToken(MakeJwt(R"({"iss":"https://accounts.google.com","sub":"123","aud":"cid",)"
+		R"("email":"U@x.org","email_verified":true,"name":"N","exp":1700000000,"iat":1699996400,"extra":[1]})"),
+		c, error));
+	CHECK(c.issuer == "https://accounts.google.com" && c.subject == "123" && c.name == "N");
+	CHECK(c.audience == std::vector<std::string>({ "cid" }) && c.HasAudience("cid") && !c.HasAudience("ci"));
+	CHECK(c.email == "U@x.org" && c.email_verified && c.email_verified_given && c.Address() == "U@x.org");
+	CHECK(c.expires_at == 1700000000 && c.issued_at == 1699996400);
+
+	// Microsoft: no email, the address in preferred_username; aud as a list
+	c = oauth2::IdTokenClaims();
+	CHECK(oauth2::ParseIdToken(MakeJwt(R"({"aud":["a","cid"],"preferred_username":"me@outlook.com",)"
+		R"("email_verified":"true","exp":1.7e9,"email":null})"), c, error));
+	CHECK(c.HasAudience("cid") && c.email.empty() && c.Address() == "me@outlook.com");
+	CHECK(c.email_verified && c.email_verified_given && c.expires_at == 1700000000);
+	c = oauth2::IdTokenClaims();
+	CHECK(oauth2::ParseIdToken(MakeJwt(R"({"preferred_username":"me","email_verified":false})"), c, error));
+	CHECK(c.Address().empty() && !c.email_verified && c.email_verified_given && c.audience.empty());
+
+	// No email_verified claim (Microsoft), or null: not stated
+	c = oauth2::IdTokenClaims();
+	CHECK(oauth2::ParseIdToken(MakeJwt(R"({"email":"me@outlook.com"})"), c, error));
+	CHECK(c.email == "me@outlook.com" && !c.email_verified && !c.email_verified_given);
+	CHECK(oauth2::ParseIdToken(MakeJwt(R"({"email":"me@outlook.com","email_verified":null})"), c, error));
+	CHECK(!c.email_verified && !c.email_verified_given);
+
+	// Refused, with nothing changed and no part of the token in the message
+	const oauth2::IdTokenClaims before = c;
+	const struct { std::string token; std::string message; } cases[] = {
+		{ "secretpart.secretpart", "the ID token is not a JWT (three parts separated by dots)" },
+		{ MakeJwt("{}") + ".more", "the ID token is not a JWT (three parts separated by dots)" },
+		{ "", "the ID token is not a JWT (three parts separated by dots)" },
+		{ "a.secret+part.c", "the ID token's payload is not base64url" },
+		{ MakeJwt("secret, not JSON"), "the ID token's payload is not a JSON object" },
+		{ MakeJwt("[\"secret\"]"), "the ID token's payload is not a JSON object" },
+		{ MakeJwt(R"({"email":42})"), "the ID token's email claim has the wrong type" },
+		{ MakeJwt(R"({"aud":7})"), "the ID token's aud claim has the wrong type" },
+		{ MakeJwt(R"({"aud":["a",7]})"), "the ID token's aud claim has the wrong type" },
+		{ MakeJwt(R"({"exp":"1700000000"})"), "the ID token's exp claim has the wrong type" },
+		{ MakeJwt(R"({"iat":-5})"), "the ID token's iat claim has the wrong type" },
+		{ MakeJwt(R"({"email_verified":1})"), "the ID token's email_verified claim has the wrong type" },
+		{ MakeJwt(R"({"sub":{"x":"secret"}})"), "the ID token's sub claim has the wrong type" },
+	};
+	for (const auto& item : cases)
+	{
+		error.clear();
+		CHECK(!oauth2::ParseIdToken(item.token, c, error));
+		CHECK(error == item.message);
+		CHECK(error.find("secret") == std::string::npos);
+		CHECK(c.Address() == before.Address() && c.audience == before.audience);
+	}
+}
+
 } // namespace
 
 int main()
@@ -1196,6 +1374,7 @@ int main()
 	TestRedact();
 	TestJson();
 	TestShippedFile();
+	TestClientChecks();
 	TestMerge();
 	TestConfigErrors();
 	TestPermissions();
@@ -1207,6 +1386,8 @@ int main()
 	TestTokenLog();
 	TestTokenRequestChecks();
 	TestTokenEndpointOf();
+	TestAuthorizationUrl();
+	TestIdToken();
 
 	if (sFailures != 0)
 	{
