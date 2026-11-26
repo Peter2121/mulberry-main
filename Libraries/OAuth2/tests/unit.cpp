@@ -20,7 +20,10 @@
 #include "oauth2/ProviderConfig.h"
 #include "oauth2/Random.h"
 #include "oauth2/Redact.h"
+#include "oauth2/TokenClient.h"
 #include "oauth2/Version.h"
+
+#include "HttpClient.h"
 
 #include <nlohmann/json.hpp>
 
@@ -558,6 +561,10 @@ void TestConfigErrors()
 		1, 52, "lower-case name");
 	EXPECT_USER_ERROR("{\"version\": 1, \"providers\": {\"example\": {\"hosts\": [\"a.test\", \"a.test\"]}}}",
 		1, 62, "listed twice");
+	EXPECT_USER_ERROR("{\"version\": 1, \"providers\": {\"example\": {\"redirect_domains\": \"live.com\"}}}",
+		1, 62, "must be a list of names");
+	EXPECT_USER_ERROR("{\"version\": 1, \"providers\": {\"example\": {\"redirect_domains\": [\"https://live.com\"]}}}",
+		1, 63, "lower-case name");
 	EXPECT_USER_ERROR("{\"version\": 1, \"providers\": {\"example\": {\"scopes\": {\"notes\": []}}}}", 1, 53,
 		"unknown scope group \"notes\"");
 	EXPECT_USER_ERROR("{\"version\": 1, \"providers\": {\"example\": {\"scopes\": {\"mail\": [\"a b\"]}}}}", 1, 62,
@@ -827,6 +834,296 @@ void TestPaths()
 	CHECK(oauth2::DisplayPath("/etc/x") == "/etc/x");
 }
 
+
+// Redirects of requests that carry secrets (task 1.4)
+void TestRedirectRules()
+{
+	oauth2::HttpSettings settings;
+	const std::vector<std::string> microsoft = { "live.com", "microsoft.com" };
+	const std::string from = "https://login.microsoftonline.com/common/oauth2/v2.0/token";
+	std::string error;
+
+	// The same host: always, whatever the list
+	CHECK(oauth2::IsRedirectAllowed(from, "https://login.microsoftonline.com/other", {}, settings, error));
+	CHECK(oauth2::IsRedirectAllowed(from, "https://LOGIN.microsoftonline.com.:8443/x", {}, settings, error));
+	// Listed domains and their subdomains
+	CHECK(oauth2::IsRedirectAllowed(from, "https://login.live.com/oauth20_token.srf", microsoft, settings, error));
+	CHECK(oauth2::IsRedirectAllowed(from, "https://live.com/x", microsoft, settings, error));
+	CHECK(oauth2::IsRedirectAllowed(from, "https://a.b.microsoft.com/x", microsoft, settings, error));
+	CHECK(oauth2::IsRedirectAllowed(from, "https://Login.Live.Com./x", microsoft, settings, error));
+	CHECK(oauth2::IsRedirectAllowed(from, "https://login.live.com/x", { "LIVE.COM." }, settings, error));
+	// Everything else
+	CHECK(!oauth2::IsRedirectAllowed(from, "https://login.live.com/x", {}, settings, error));
+	CHECK(error == "host login.live.com is neither the endpoint's host nor in the provider's redirect_domains");
+	const char* const refusedListed[] = {
+		"https://evillive.com/x", "https://live.com.evil.org/x", "https://microsoftonline.com/x",
+		"https://login.microsoftonline.com.evil.org/x", "http://login.live.com/x",
+		"https://user:pw@login.live.com/x", "ftp://login.live.com/x", "/relative", "",
+		"http://127.0.0.1/x"
+	};
+	for (const char* to : refusedListed)
+		CHECK(!oauth2::IsRedirectAllowed(from, to, microsoft, settings, error));
+	CHECK(!oauth2::IsRedirectAllowed(from, "https://login.live.com/x", { "" }, settings, error));
+	// A domain matches whole labels only
+	CHECK(!oauth2::IsRedirectAllowed(from, "https://login.live.com/x", { "ive.com" }, settings, error));
+
+	// Tests: http to loopback only when allowed
+	settings.allow_http_loopback = true;
+	CHECK(oauth2::IsRedirectAllowed("http://127.0.0.1:5/a", "http://127.0.0.1:6/b", {}, settings, error));
+	CHECK(!oauth2::IsRedirectAllowed("http://127.0.0.1:5/a", "http://localhost:5/b", {}, settings, error));
+	CHECK(oauth2::IsRedirectAllowed("http://127.0.0.1:5/a", "http://localhost:5/b", { "localhost" }, settings, error));
+	CHECK(!oauth2::IsRedirectAllowed("https://a.test/", "http://a.test/", {}, settings, error));
+}
+
+// Token endpoint answers (task 1.4), without network
+void TestTokenResponse()
+{
+	using oauth2::TokenError;
+	oauth2::TokenResponse r;
+	TokenError e;
+
+	// Success, Google style
+	CHECK(oauth2::ParseTokenResponse(200, "application/json",
+		R"({"access_token":"ya29.a","expires_in":3599,"refresh_token":"1//r","scope":"openid https://mail.google.com/ email",)"
+		R"("token_type":"Bearer","id_token":"h.p.s","refresh_token_expires_in":604799})", 1000, r, e));
+	CHECK(e.kind == TokenError::Kind::None);
+	CHECK(r.access_token == "ya29.a");
+	CHECK(r.token_type == "Bearer");
+	CHECK(r.expires_in == 3599);
+	CHECK(r.refresh_token == "1//r");
+	CHECK(r.scope_given);
+	CHECK((r.scopes == std::vector<std::string>{"openid", "https://mail.google.com/", "email"}));
+	CHECK(r.id_token == "h.p.s");
+	CHECK(r.refresh_token_expires_in == 604799);
+	CHECK(r.received_at == 1000);
+
+	// Minimal: type in lower case, no expiry, no scope, no refresh token
+	CHECK(oauth2::ParseTokenResponse(200, "", R"({"access_token":"a","token_type":"bearer"})", 5, r, e));
+	CHECK(r.token_type == "Bearer");
+	CHECK(r.expires_in == -1);
+	CHECK(!r.scope_given && r.scopes.empty());
+	CHECK(r.refresh_token.empty());
+	CHECK(oauth2::ParseTokenResponse(200, "", R"({"access_token":"a"})", 5, r, e));
+	CHECK(r.token_type == "Bearer");
+
+	// expires_in variants
+	CHECK(oauth2::ParseTokenResponse(200, "", R"({"access_token":"a","expires_in":"3600"})", 0, r, e) && r.expires_in == 3600);
+	CHECK(oauth2::ParseTokenResponse(200, "", R"({"access_token":"a","expires_in":3600.0})", 0, r, e) && r.expires_in == 3600);
+	CHECK(oauth2::ParseTokenResponse(200, "", R"({"access_token":"a","expires_in":null})", 0, r, e) && r.expires_in == -1);
+	for (const char* bad : {R"("soon")", "-1", R"("")", R"("-5")", "true", "99999999999", R"("12345678901")"})
+	{
+		CHECK(!oauth2::ParseTokenResponse(200, "", std::string(R"({"access_token":"a","expires_in":)") + bad + "}", 0, r, e));
+		CHECK(e.kind == TokenError::Kind::Protocol);
+	}
+
+	// Protocol errors, never quoting the body
+	const char* const protocol[] = {
+		R"({"access_token":"SECRET",)", R"(["SECRET"])", "", "SECRET", R"({"token_type":"Bearer"})",
+		R"({"access_token":""})", R"({"access_token":42})", R"({"access_token":"SECRET","token_type":"mac"})",
+		R"({"access_token":"SECRET","token_type":7})"
+	};
+	for (const char* body : protocol)
+	{
+		CHECK(!oauth2::ParseTokenResponse(200, "application/json", body, 0, r, e));
+		CHECK(e.kind == TokenError::Kind::Protocol);
+		CHECK(e.message.find("SECRET") == std::string::npos);
+		CHECK(r.access_token.empty());
+	}
+	oauth2::ParseTokenResponse(200, "application/json", R"({"access_token":"x","token_type":"mac"})", 0, r, e);
+	CHECK(e.message == "unsupported token_type \"mac\" (only Bearer is supported)");
+	oauth2::ParseTokenResponse(200, "application/json", "[1]", 0, r, e);
+	CHECK(e.message == "the token endpoint's answer is not a JSON object (application/json, 3 bytes)");
+
+	// HTTP errors without an OAuth2 error
+	CHECK(!oauth2::ParseTokenResponse(500, "text/html", "<html>SECRET</html>", 0, r, e));
+	CHECK(e.kind == TokenError::Kind::Http && e.http_status == 500);
+	CHECK(e.message == "HTTP 500 from the token endpoint (text/html, 19 bytes)");
+	CHECK(!oauth2::ParseTokenResponse(302, "", "", 0, r, e));
+	CHECK(e.kind == TokenError::Kind::Http);
+	CHECK(e.message == "HTTP 302 from the token endpoint: a redirect that was not followed");
+	CHECK(!oauth2::ParseTokenResponse(201, "", R"({"access_token":"a"})", 0, r, e));
+	CHECK(e.kind == TokenError::Kind::Http);
+
+	// OAuth2 errors (RFC 6749 section 5.2)
+	CHECK(!oauth2::ParseTokenResponse(400, "application/json",
+		R"({"error":"invalid_grant","error_description":"Token has been expired or revoked."})", 0, r, e));
+	CHECK(e.kind == TokenError::Kind::OAuth && e.http_status == 400);
+	CHECK(e.error == "invalid_grant");
+	CHECK(e.RequiresSignIn() && !e.IsClientProblem());
+	CHECK(e.message == "invalid_grant: Token has been expired or revoked.");
+
+	// Google error_subtype
+	CHECK(!oauth2::ParseTokenResponse(400, "", R"J({"error":"invalid_grant","error_description":"reauth related error (invalid_rapt)",)J"
+		R"J("error_uri":"https://support.google.com/a/answer/9368756","error_subtype":"invalid_rapt"})J", 0, r, e));
+	CHECK(e.subtype == "invalid_rapt");
+	CHECK(e.uri == "https://support.google.com/a/answer/9368756");
+	CHECK(e.message == "invalid_grant (invalid_rapt): reauth related error (invalid_rapt)");
+
+	// Microsoft: error_codes, suberror, multi-line description, correlation ID
+	CHECK(!oauth2::ParseTokenResponse(400, "", R"({"error":"invalid_grant","error_description":"AADSTS50173: The provided grant has expired due to it being revoked.\r\nTrace ID: t\r\nCorrelation ID: c",)"
+		R"("error_codes":[50173],"suberror":"bad_token","correlation_id":"c-1"})", 0, r, e));
+	CHECK(e.aadsts == 50173);
+	CHECK(e.subtype == "bad_token");
+	CHECK(e.correlation_id == "c-1");
+	CHECK(e.description == "AADSTS50173: The provided grant has expired due to it being revoked.");
+	// The code from the description when error_codes is missing
+	CHECK(!oauth2::ParseTokenResponse(401, "", R"({"error":"invalid_client","error_description":"AADSTS700016: Application not found"})", 0, r, e));
+	CHECK(e.aadsts == 700016);
+	CHECK(e.IsClientProblem() && !e.RequiresSignIn());
+	CHECK(!oauth2::ParseTokenResponse(400, "", R"({"error":"unauthorized_client"})", 0, r, e));
+	CHECK(e.IsClientProblem() && e.aadsts == 0 && e.message == "unauthorized_client");
+
+	// An error in a 200 answer, an error object, an unusable error value
+	CHECK(!oauth2::ParseTokenResponse(200, "", R"({"error":"authorization_pending","access_token":"x"})", 0, r, e));
+	CHECK(e.kind == TokenError::Kind::OAuth && e.error == "authorization_pending");
+	CHECK(!oauth2::ParseTokenResponse(400, "", R"({"error":{"errorId":"INVALID_INPUT","localizedMessage":"not supported"}})", 0, r, e));
+	CHECK(e.error == "INVALID_INPUT" && e.description == "not supported");
+	CHECK(!oauth2::ParseTokenResponse(400, "", R"({"error":12})", 0, r, e));
+	CHECK(e.error == "unknown_error");
+
+	// Descriptions: control characters, outer spaces, length (UTF-8 kept whole)
+	CHECK(!oauth2::ParseTokenResponse(400, "", R"({"error":"x","error_description":"  a\tb\u0007c  "})", 0, r, e));
+	CHECK(e.description == "a b c");
+	std::string longText;
+	for (int i = 0; i < 200; ++i)
+		longText += "\xc3\xa9";		// 400 bytes
+	CHECK(!oauth2::ParseTokenResponse(400, "", R"({"error":"x","error_description":")" + longText + "\"}", 0, r, e));
+	CHECK(e.description.size() == 303);
+	CHECK(e.description.substr(0, 300) == longText.substr(0, 300));
+
+	CHECK(std::string(oauth2::KindName(TokenError::Kind::OAuth)) == "oauth");
+	CHECK(std::string(oauth2::KindName(TokenError::Kind::Timeout)) == "timeout");
+}
+
+void TestTokenRotation()
+{
+	oauth2::Tokens tokens;
+	tokens.refresh_token = "r1";
+	tokens.scopes = {"a", "b"};
+	CHECK(tokens.NeedsRefresh(100));
+
+	oauth2::TokenResponse r;
+	r.access_token = "t1";
+	r.expires_in = 3600;
+	r.received_at = 1000;
+	CHECK(!oauth2::UpdateTokens(tokens, r));		// no refresh token: kept
+	CHECK(tokens.refresh_token == "r1");
+	CHECK(tokens.access_token == "t1");
+	CHECK(tokens.expires_at == 4600);
+	CHECK((tokens.scopes == std::vector<std::string>{"a", "b"}));
+	CHECK(!tokens.NeedsRefresh(4000));
+	CHECK(tokens.NeedsRefresh(4540));
+	CHECK(!tokens.NeedsRefresh(4539));
+	CHECK(tokens.NeedsRefresh(4540, 0) == false);
+	CHECK(tokens.NeedsRefresh(4600, 0));
+
+	r.refresh_token = "r2";						// rotation
+	r.scope_given = true;
+	r.scopes = {"a"};
+	r.id_token = "id";
+	CHECK(oauth2::UpdateTokens(tokens, r));
+	CHECK(tokens.refresh_token == "r2");
+	CHECK((tokens.scopes == std::vector<std::string>{"a"}));
+	CHECK(tokens.id_token == "id");
+	CHECK(!oauth2::UpdateTokens(tokens, r));		// the same one again: no change
+
+	r.expires_in = -1;							// unknown expiry: refresh before use
+	oauth2::UpdateTokens(tokens, r);
+	CHECK(tokens.expires_at == 0 && tokens.NeedsRefresh(0));
+}
+
+void TestTokenLog()
+{
+	CHECK(oauth2::RedactJsonBody(R"({"access_token":"abc","token_type":"Bearer","refresh_token":"defg","id_token":"h","expires_in":1})") ==
+		R"({"access_token":"<redacted 3 bytes>","token_type":"Bearer","refresh_token":"<redacted 4 bytes>","id_token":"<redacted 1 byte>","expires_in":1})");
+	CHECK(oauth2::RedactJsonBody(R"({"error":"invalid_grant"})") == R"({"error":"invalid_grant"})");
+	CHECK(oauth2::RedactJsonBody(R"({"access_token":{"x":"SECRET"}})") == R"({"access_token":"<redacted>"})");
+	CHECK(oauth2::RedactJsonBody(R"({"access_token":"SECRET",)") == "(25 bytes, not JSON)");
+	CHECK(oauth2::RedactJsonBody(R"(["SECRET"])") == "(10 bytes, not JSON)");
+	CHECK(oauth2::RedactJsonBody("") == "(0 bytes, not JSON)");
+
+	CHECK(oauth2::RedactHeaderLine("Authorization: Bearer abc") == "Authorization: <redacted 10 bytes>");
+	CHECK(oauth2::RedactHeaderLine("set-cookie: a=b; Path=/") == "set-cookie: <redacted 11 bytes>");
+	CHECK(oauth2::RedactHeaderLine("Cookie:x") == "Cookie:<redacted 1 byte>");
+	CHECK(oauth2::RedactHeaderLine("Proxy-Authorization: Basic eA==") == "Proxy-Authorization: <redacted 10 bytes>");
+	CHECK(oauth2::RedactHeaderLine("Content-Type: application/json") == "Content-Type: application/json");
+	CHECK(oauth2::RedactHeaderLine("POST /token HTTP/1.1") == "POST /token HTTP/1.1");
+}
+
+// Requests refused before sending: no network is used
+void TestTokenRequestChecks()
+{
+	using oauth2::TokenError;
+	std::vector<std::string> log;
+	oauth2::HttpSettings settings;
+	settings.log = [&log](const std::string& line) { log.push_back(line); };
+	oauth2::TokenEndpoint endpoint;
+	endpoint.url = "https://127.0.0.1:1/token";
+	endpoint.client_id = "id";
+	oauth2::TokenResponse r;
+	TokenError e;
+	const std::string verifier(43, 'v');
+
+	CHECK(!oauth2::ExchangeCode(endpoint, "", verifier, "http://127.0.0.1/", settings, r, e));
+	CHECK(e.kind == TokenError::Kind::Config && e.message == "no authorization code");
+	CHECK(!oauth2::ExchangeCode(endpoint, "c", verifier, "", settings, r, e));
+	CHECK(e.kind == TokenError::Kind::Config && e.message == "no redirect URI");
+	CHECK(!oauth2::ExchangeCode(endpoint, "c", "short", "http://127.0.0.1/", settings, r, e));
+	CHECK(e.kind == TokenError::Kind::Config && e.message == "invalid PKCE code verifier");
+	CHECK(!oauth2::RefreshToken(endpoint, "", {}, settings, r, e));
+	CHECK(e.kind == TokenError::Kind::Config && e.message == "no refresh token");
+
+	oauth2::TokenEndpoint noClient = endpoint;
+	noClient.client_id.clear();
+	CHECK(!oauth2::RefreshToken(noClient, "r", {}, settings, r, e));
+	CHECK(e.kind == TokenError::Kind::Config && e.message == "no client ID for this provider");
+
+	// http:// only to loopback, and only when allowed (tests)
+	const char* const refused[] = {
+		"http://127.0.0.1:1/token", "http://example.org/token", "ftp://example.org/token",
+		"https://user:pw@example.org/token", "https://user@example.org/token", "not a url", ""
+	};
+	for (const char* url : refused)
+	{
+		oauth2::TokenEndpoint bad = endpoint;
+		bad.url = url;
+		CHECK(!oauth2::RefreshToken(bad, "SECRET-refresh", {}, settings, r, e));
+		CHECK(e.kind == TokenError::Kind::Config);
+	}
+	settings.allow_http_loopback = true;
+	bool loopback = false;
+	std::string error;
+	for (const char* url : {"http://127.0.0.1:8/t", "http://[::1]:8/t", "http://LOCALHOST/t", "https://localhost/t"})
+	{
+		CHECK(oauth2::CheckRequestUrl(url, settings, loopback, error));
+		CHECK(loopback);
+	}
+	CHECK(!oauth2::CheckRequestUrl("http://127.0.0.2/t", settings, loopback, error));
+	CHECK(!oauth2::CheckRequestUrl("http://example.org/t", settings, loopback, error));
+	CHECK(oauth2::CheckRequestUrl("https://oauth2.googleapis.com/token", settings, loopback, error));
+	CHECK(!loopback);
+
+	// The refusals are logged, never with the refresh token
+	CHECK(!log.empty());
+	for (const std::string& line : log)
+		CHECK(line.find("SECRET") == std::string::npos);
+}
+
+void TestTokenEndpointOf()
+{
+	oauth2::Provider p;
+	p.token_endpoint = "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token";
+	p.tenant = "consumers";
+	p.client_id = "cid";
+	p.client_secret = "cs";
+	p.redirect_domains = { "live.com" };
+	const oauth2::TokenEndpoint e = oauth2::TokenEndpointOf(p);
+	CHECK(e.redirect_domains == p.redirect_domains);
+	CHECK(e.url == "https://login.microsoftonline.com/consumers/oauth2/v2.0/token");
+	CHECK(e.client_id == "cid");
+	CHECK(e.client_secret == "cs");
+}
+
 } // namespace
 
 int main()
@@ -845,6 +1142,12 @@ int main()
 	TestConfigErrors();
 	TestPermissions();
 	TestPaths();
+	TestRedirectRules();
+	TestTokenResponse();
+	TestTokenRotation();
+	TestTokenLog();
+	TestTokenRequestChecks();
+	TestTokenEndpointOf();
 
 	if (sFailures != 0)
 	{

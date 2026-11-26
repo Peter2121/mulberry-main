@@ -171,6 +171,8 @@ void PrintProvider(const oauth2::Provider& p)
 		p.ResolveEndpoint(p.device_authorization_endpoint).c_str() : "(not offered)");
 	std::printf("  revocation:     %s\n", p.revocation_endpoint.empty() ?
 		"(none)" : p.ResolveEndpoint(p.revocation_endpoint).c_str());
+	std::printf("  redirects to:   %s\n", p.redirect_domains.empty() ?
+		"(same host only)" : JoinWords(p.redirect_domains).c_str());
 	for (const auto& group : p.scopes)
 		std::printf("  scopes %-8s %s\n", (group.first + ":").c_str(), JoinWords(group.second).c_str());
 	for (const auto& param : p.authorization_params)

@@ -342,7 +342,7 @@ const std::vector<std::string>& ProviderKeys()
 {
 	static const std::vector<std::string> cKeys = { "name", "enabled", "hosts", "domains",
 		"authorization_endpoint", "token_endpoint", "device_authorization_endpoint",
-		"revocation_endpoint", "scopes", "authorization_params", "redirect", "pkce", "sasl",
+		"revocation_endpoint", "redirect_domains", "scopes", "authorization_params", "redirect", "pkce", "sasl",
 		"client_id", "client_secret", "tenant" };
 	return cKeys;
 }
@@ -471,7 +471,7 @@ private:
 				if (!value.is_boolean())
 					AtValue(child, what + " must be true or false");
 			}
-			else if (key == "hosts" || key == "domains")
+			else if (key == "hosts" || key == "domains" || key == "redirect_domains")
 				HostList(child, what, value);
 			else if (key == "authorization_endpoint" || key == "token_endpoint")
 				Url(child, what, value, false);
@@ -766,6 +766,8 @@ Provider ToProvider(const Merged& merged)
 	p.token_endpoint = o.value("token_endpoint", std::string());
 	p.device_authorization_endpoint = o.value("device_authorization_endpoint", std::string());
 	p.revocation_endpoint = o.value("revocation_endpoint", std::string());
+	if (o.contains("redirect_domains"))
+		p.redirect_domains = StringList(o.at("redirect_domains"));
 	if (o.contains("scopes"))
 	{
 		for (auto it = o.at("scopes").begin(); it != o.at("scopes").end(); ++it)

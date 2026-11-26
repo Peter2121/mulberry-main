@@ -49,13 +49,14 @@ TOOL_CPPFLAGS = -DOAUTH2_TOOL_APP_ID='"$(APP_ID)"' \
 
 LIBRARY = libOAuth2$A
 SOURCES = Identity Version Encoding Random Pkce Redact Paths Permissions Provider \
-	ProviderConfig JsonIndex
+	ProviderConfig JsonIndex HttpClient TokenClient
 OBJS = $(SOURCES:%=obj/%$O)
 
 CONFDIR = $(DESTDIR)$(SYSCONFDIR)/$(APP_ID)
 
 TOOL = oauth2-tool
 UNIT = oauth2-unit
+DRIVER = oauth2-token-driver
 
 all: $(LIBRARY) $(TOOL)
 
@@ -84,14 +85,20 @@ $(TOOL): obj/tools/oauth2-tool$O $(LIBRARY)
 $(UNIT): obj/tests/unit$O $(LIBRARY)
 	$(CXX) -o $@ obj/tests/unit$O $(LIBRARY) $(SYS_LIBS) $(TOOL_LIBS)
 
+$(DRIVER): obj/tests/token-driver$O $(LIBRARY)
+	$(CXX) -o $@ obj/tests/token-driver$O $(LIBRARY) $(SYS_LIBS) $(TOOL_LIBS)
+
 # Offline checks: no network, no account.  The unit tests read
-# data/$(PROVIDER_FILE) and create their temporary files in obj/tests/.  The
-# last line validates the shipped system file as the application would.
-check: all $(UNIT)
+# data/$(PROVIDER_FILE) and create their temporary files in obj/tests/; the
+# tool validates the shipped system file as the application would; the
+# token client runs against a mock server on 127.0.0.1 (Python 3, output in
+# obj/tests/token/).
+check: all $(UNIT) $(DRIVER)
 	./$(UNIT)
 	./$(TOOL) --version
 	./$(TOOL) --system-config data/$(PROVIDER_FILE) --no-user-config providers > /dev/null
 	@echo "data/$(PROVIDER_FILE): valid"
+	sh tests/token-tests.sh ./$(DRIVER) tests obj/tests/token
 
 # The system provider file (OAUTH2-PLAN.md, section 7); oauth2-tool stays in
 # the build tree (decision D7)
@@ -104,7 +111,7 @@ uninstall:
 	-rmdir $(CONFDIR) 2>/dev/null
 
 clean:
-	rm -rf obj $(LIBRARY) $(TOOL) $(UNIT)
+	rm -rf obj $(LIBRARY) $(TOOL) $(UNIT) $(DRIVER)
 
 distclean: clean
 

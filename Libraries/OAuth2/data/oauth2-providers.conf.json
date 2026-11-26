@@ -11,6 +11,7 @@
       "authorization_endpoint": "https://accounts.google.com/o/oauth2/v2/auth",
       "token_endpoint": "https://oauth2.googleapis.com/token",
       "revocation_endpoint": "https://oauth2.googleapis.com/revoke",
+      "redirect_domains": [],
       "scopes": {
         "always": ["openid", "email"],
         "mail": ["https://mail.google.com/"],
@@ -34,6 +35,7 @@
       "authorization_endpoint": "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize",
       "token_endpoint": "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token",
       "device_authorization_endpoint": "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/devicecode",
+      "redirect_domains": ["live.com", "microsoft.com"],
       "scopes": {
         "always": ["offline_access", "openid", "email", "profile"],
         "mail": ["https://outlook.office.com/IMAP.AccessAsUser.All",
@@ -53,6 +55,7 @@
       "domains": ["yahoo.com", "ymail.com", "rocketmail.com", "yahoo.fr"],
       "authorization_endpoint": "https://api.login.yahoo.com/oauth2/request_auth",
       "token_endpoint": "https://api.login.yahoo.com/oauth2/get_token",
+      "redirect_domains": [],
       "scopes": {
         "always": ["openid", "email"],
         "mail": ["mail-w"]
@@ -72,6 +75,7 @@
       "authorization_endpoint": "https://oauth.yandex.com/authorize",
       "token_endpoint": "https://oauth.yandex.com/token",
       "device_authorization_endpoint": "https://oauth.yandex.com/device/code",
+      "redirect_domains": [],
       "scopes": {
         "mail": ["mail:imap_full", "mail:smtp"]
       },
@@ -88,6 +92,7 @@
       "domains": ["mail.ru", "inbox.ru", "list.ru", "bk.ru", "internet.ru"],
       "authorization_endpoint": "https://o2.mail.ru/login",
       "token_endpoint": "https://o2.mail.ru/token",
+      "redirect_domains": [],
       "scopes": {
         "always": ["userinfo"],
         "mail": ["mail.imap"]
@@ -107,6 +112,7 @@
       "authorization_endpoint": "https://accounts.zoho.com/oauth/v2/auth",
       "token_endpoint": "https://accounts.zoho.com/oauth/v2/token",
       "device_authorization_endpoint": "https://accounts.zoho.com/oauth/v3/device/code",
+      "redirect_domains": [],
       "scopes": {
         "mail": ["ZOHOMAIL.PROTOCOL.IMAP", "ZOHOMAIL.PROTOCOL.POP"]
       },

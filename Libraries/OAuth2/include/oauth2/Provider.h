@@ -48,6 +48,12 @@ struct Provider
 	std::string device_authorization_endpoint;
 	std::string revocation_endpoint;
 
+	// Domains, besides the endpoint's own host, to which a 307 or 308
+	// redirect of a request with secrets (token endpoint) may lead: the
+	// domain itself and its subdomains ("live.com": login.live.com).
+	// Empty: redirects only to the same host.
+	std::vector<std::string> redirect_domains;
+
 	// Scope group -> scopes
 	std::map<std::string, std::vector<std::string>> scopes;
 
