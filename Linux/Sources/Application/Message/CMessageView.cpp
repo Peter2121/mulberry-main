@@ -356,7 +356,6 @@ void CMessageView::OnCreate()
 	mText->SetTabSelectAll(false);
 	mText->SetFindAllowed(true);
 
-#ifdef HTML_VIEWER
 	// HTML view ("Format: as HTML"), in the same place as the text, hidden
 	// until an HTML part is shown
 	mHTML =
@@ -373,7 +372,6 @@ void CMessageView::OnCreate()
 					JXWidget::kFixedLeft, JXWidget::kFixedTop, 548,5, 220,22);
 	mRemoteImagesBtn->Hide();
 	ListenTo(mRemoteImagesBtn);
-#endif
 
 	// Only use focus if 3pane
 	if (mOwnerWindow != C3PaneWindow::s3PaneWindow)
@@ -554,10 +552,8 @@ void CMessageView::ListenTo_Message(long msg, void* param)
 bool CMessageView::HasFocus() const
 {
 	// Switch target to the text (will focus)
-#ifdef HTML_VIEWER
 	if (mHTMLShown)
 		return mHTML->IsTarget();
-#endif
 	return mText->IsTarget();
 }
 
@@ -571,13 +567,11 @@ void CMessageView::Focus()
 // Focus the message text: the HTML view when it is shown
 void CMessageView::FocusText()
 {
-#ifdef HTML_VIEWER
 	if (mHTMLShown)
 	{
 		mHTML->Focus();
 		return;
 	}
-#endif
 	mText->Focus();
 }
 
@@ -594,7 +588,6 @@ void CMessageView::SetParsing(EView view)
 // Show the HTML view instead of the text, or the text
 void CMessageView::ShowHTML(bool show)
 {
-#ifdef HTML_VIEWER
 	if (show == mHTMLShown)
 		return;
 
@@ -615,18 +608,15 @@ void CMessageView::ShowHTML(bool show)
 	if (had_focus)
 		FocusText();
 	RemoteImagesChanged();
-#endif
 }
 
 // The remote images button follows the HTML view
 void CMessageView::RemoteImagesChanged()
 {
-#ifdef HTML_VIEWER
 	if (!mRemoteImagesBtn)
 		return;
 
 	mHTML->UpdateRemoteImagesButton(mRemoteImagesBtn, mHTMLShown);
-#endif
 }
 
 // Get text to save from open message window
@@ -711,7 +701,6 @@ void CMessageView::SetMessage(CMessage* theMsg, bool restore)
 	if (mItsMsg)
 	{
 		CAttachment* attach = mItsMsg->FirstDisplayPart();
-#ifdef HTML_VIEWER
 		// A message with HTML opens as HTML, a message without it in the
 		// formatted view; a view chosen by the user (plain, source, ...) stays.
 		// When a saved view state is restored, its view is kept (as HTML:
@@ -727,7 +716,6 @@ void CMessageView::SetMessage(CMessage* theMsg, bool restore)
 			else if (!restore && !html && (mParsing == eViewAsHTML))
 				SetParsing(eViewFormatted);
 		}
-#endif
 		ShowPart(attach, restore);
 		mPartsTable->SetRowShow(attach);
 
@@ -752,9 +740,7 @@ void CMessageView::SetMessage(CMessage* theMsg, bool restore)
 		mText->SetText(cdstring::null_str);
 
 		// Back to the text
-#ifdef HTML_VIEWER
 		mHTML->ClearContent();
-#endif
 		ShowHTML(false);
 	}
 		
@@ -821,10 +807,8 @@ void CMessageView::RestoreMessage(CMessage* theMsg, const SMessageViewState& sta
 	// Do selection before scroll as selection change may cause scroll
 	mText->SetSelectionRange(state.mTextSelectionStart, state.mTextSelectionEnd);
 	mText->SetScrollPos(state.mScrollHpos, state.mScrollVpos);
-#ifdef HTML_VIEWER
 	if (mHTMLShown)
 		mHTML->SetScrollPos(state.mScrollHpos, state.mScrollVpos);
-#endif
 }
 
 // Processing after message set and displayed
@@ -919,9 +903,7 @@ void CMessageView::MessageChanged()
 
 		// If currently active, force focus to owner view
 		bool html_focus = false;
-#ifdef HTML_VIEWER
 		html_focus = mHTML->HasFocus();
-#endif
 		if (mText->HasFocus() || html_focus || mPartsTable->HasFocus() || mCaption1->HasFocus() || mCaption2->HasFocus())
 			mMailboxView->GetBaseTable()->Focus();
 	}
@@ -1031,14 +1013,12 @@ void CMessageView::ResetText()
 		// As HTML: the HTML view shows the part (the text above stays
 		// filled, for saving, printing and quoting); if the viewer rejects
 		// it, the text is shown
-#ifdef HTML_VIEWER
 		bool show_html = false;
 		if ((mParsing == eViewAsHTML) && mCurrentPart && mUTF16Text.get())
 			show_html = mHTML->SetContent(mUTF16Text.get(), header_text.c_str(), *actual_font, mFontScale, mItsMsg);
 		else
 			mHTML->ClearContent();
 		ShowHTML(show_html);
-#endif
 	}
 
 	// Make it active in 1-pane mode
@@ -1449,10 +1429,8 @@ void CMessageView::RemovePrintSummary()
 // Scroll the text if possible
 bool CMessageView::SpacebarScroll(bool shift_key)
 {
-#ifdef HTML_VIEWER
 	if (mHTMLShown)
 		return mHTML->SpacebarScroll(shift_key);
-#endif
 
 	// Check whether scrolled to the bottom or no scrollbar
 	JXScrollbar* horiz;
@@ -1905,10 +1883,8 @@ void CMessageView::OnZoomPane()
 void CMessageView::GetViewState(SMessageViewState& state) const
 {
 	mText->GetScrollPos(state.mScrollHpos, state.mScrollVpos);
-#ifdef HTML_VIEWER
 	if (mHTMLShown)
 		mHTML->GetScrollPos(state.mScrollHpos, state.mScrollVpos);
-#endif
 	mText->GetSelectionRange(state.mTextSelectionStart, state.mTextSelectionEnd);
 	state.mShowHeader = mShowHeader;
 	state.mPartsExpanded = mPartsTwister->IsChecked();
@@ -1952,10 +1928,8 @@ void CMessageView::SetViewState(const SMessageViewState& state)
 	// Do selection before scroll as selection change may cause scroll
 	mText->SetSelectionRange(state.mTextSelectionStart, state.mTextSelectionEnd);
 	mText->SetScrollPos(state.mScrollHpos, state.mScrollVpos);
-#ifdef HTML_VIEWER
 	if (mHTMLShown)
 		mHTML->SetScrollPos(state.mScrollHpos, state.mScrollVpos);
-#endif
 }
 
 // Show/hide address caption area
@@ -2137,13 +2111,11 @@ void CMessageView::Receive(JBroadcaster* sender, const Message& message)
 			OnDecreaseFont();
 			return;
 		}		
-#ifdef HTML_VIEWER
 		else if (sender == mRemoteImagesBtn)
 		{
 			mHTML->LoadRemoteImages();
 			return;
 		}
-#endif
 	}
 	else if(message.Is(JXMenu::kItemSelected))
 	{

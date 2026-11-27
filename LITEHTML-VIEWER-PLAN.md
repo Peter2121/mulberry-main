@@ -628,10 +628,12 @@ stack S1 (Cairo + HarfBuzz). Replaces the overview in section 8.*
   - Mulberry starts, and mail displays exactly as before, unless changing that
     is the point of the task.
 - **The new viewer stays switched off until stage 8:**
-  - at build time, `configure --disable-html-viewer` builds Mulberry without
-    any of the new libraries. This path is kept working throughout, also as a
-    fallback for packagers;
-  - at run time, a preference (default off) selects the new viewer.
+  - at build time, the viewer is always built. Until 2026-11-27,
+    `configure --disable-html-viewer` (and `scripts/build-freebsd.sh -n`)
+    built Mulberry without the new libraries; that variant was dropped then,
+    as no use for a mail client without the viewer remained;
+  - at run time, a preference (default off) selects the new viewer: this is
+    the fallback.
 - **The viewer core knows nothing about JX or Mulberry.** It lives in
   `Libraries/HTMLView` and is compiled without Mulberry's prefix header.
   Mulberry gives it UTF-8 HTML, a Cairo context and the visible rectangle,
@@ -660,11 +662,12 @@ stack S1 (Cairo + HarfBuzz). Replaces the overview in section 8.*
 | 1.4 | Target `htmldeps-harfbuzz` (options from section 10.6) | `libharfbuzz.a`; no GLib or libstdc++ symbols | S |
 | 1.5 | Target `htmldeps-litehtml` (litehtml's own CMake, out of tree, static, tests off) | `liblitehtml.a` and `libgumbo.a` in `dist/lib`, headers in `dist/include` | S |
 | 1.6 | `htmldeps` (the four targets) becomes part of `all`, with `clean` and `distclean`, and a `SKIPHTMLDEPS` switch like `SKIPJX`. Meson and CMake configure only once; later runs are incremental | fresh-clone build works; a second `gmake` finishes quickly; Mulberry unchanged | M |
-| 1.7 | `configure.in`: `--enable-html-viewer` (default) / `--disable-html-viewer`. Enabled: defines `HTML_VIEWER` and substitutes include and link flags (static archives by full path, then the system FreeType, fontconfig, libpng, zlib and Xrender). Disabled: `htmldeps` skipped | both configurations build and run; the binary is the same size as before (nothing references the libraries yet) | M |
+| 1.7 | `configure.in`: `--enable-html-viewer` (default) / `--disable-html-viewer`. Enabled: defines `HTML_VIEWER` and substitutes include and link flags (static archives by full path, then the system FreeType, fontconfig, libpng, zlib and Xrender). Disabled: `htmldeps` skipped (the disabled variant was dropped on 2026-11-27: the viewer is always built) | both configurations build and run; the binary is the same size as before (nothing references the libraries yet) | M |
 
 **Stage 1 done (2026-11-23).** Notes:
-- `scripts/build-freebsd.sh -n` builds without the viewer (passes
-  `--disable-html-viewer`; meson, ninja and cmake are then not required).
+- `scripts/build-freebsd.sh -n` built without the viewer (passed
+  `--disable-html-viewer`; meson, ninja and cmake were then not required).
+  Dropped on 2026-11-27, with `--disable-html-viewer`.
 - The flags substituted by configure (`HTMLVIEW_CPPFLAGS`, `HTMLVIEW_LIBS`)
   are not used by `Linux/Makefile` yet: Mulberry links them from stage 3 on,
   so its binary is unchanged until then.
@@ -774,7 +777,8 @@ decisions taken then:
 - Build: `Linux/Makefile` links the static libraries (Mulberry grows by
   about 9 MB unstripped); run-time dependencies added: libpng and libXrender
   only. Without the viewer (`--disable-html-viewer`) the changed files
-  compile to the old behaviour.
+  compiled to the old behaviour (variant and `HTML_VIEWER` guards dropped on
+  2026-11-27).
 
 **Stage 3 follow-up (2026-11-23), from two real newsletters (an MJML one and
 a classic table one):**

@@ -309,7 +309,6 @@ void CMessageWindow::OnCreate()
 	mText->SetTabSelectAll(false);
 	mText->SetFindAllowed(true);
 
-#ifdef HTML_VIEWER
 	// HTML view ("Format: as HTML"), in the same place as the text, hidden
 	// until an HTML part is shown
 	mHTML = new CHTMLDisplay(mBottomPane, JXWidget::kHElastic, JXWidget::kVElastic,
@@ -324,7 +323,6 @@ void CMessageWindow::OnCreate()
 					JXWidget::kFixedLeft, JXWidget::kFixedTop, 551,2, 220,22);
 	mRemoteImagesBtn->Hide();
 	ListenTo(mRemoteImagesBtn);
-#endif
 
 	// Hide the verify/decrypt details
 	ShowSecretPane(false);
@@ -622,7 +620,6 @@ void CMessageWindow::SetMessage(CMessage* theMsg)
 
 	// Reset text
 	CAttachment* attach = mItsMsg->FirstDisplayPart();
-#ifdef HTML_VIEWER
 	// A message with HTML opens as HTML, a message without it in the
 	// formatted view; a view chosen by the user (plain, source, ...) stays
 	{
@@ -635,7 +632,6 @@ void CMessageWindow::SetMessage(CMessage* theMsg)
 		else if (!html && (mParsing == eViewAsHTML))
 			SetParsing(eViewFormatted);
 	}
-#endif
 	ShowPart(attach);
 	mPartsTable->SetRowShow(attach);
 
@@ -937,14 +933,12 @@ void CMessageWindow::ResetText(void)
 		// As HTML: the HTML view shows the part (the text above stays
 		// filled, for saving, printing and quoting); if the viewer rejects
 		// it, the text is shown
-#ifdef HTML_VIEWER
 		bool show_html = false;
 		if ((mParsing == eViewAsHTML) && mCurrentPart && mUTF16Text.get())
 			show_html = mHTML->SetContent(mUTF16Text.get(), header_text.c_str(), *actual_font, mFontScale, mItsMsg);
 		else
 			mHTML->ClearContent();
 		ShowHTML(show_html);
-#endif
 	}
 
 	// Make it active
@@ -954,13 +948,11 @@ void CMessageWindow::ResetText(void)
 // Focus the message text: the HTML view when it is shown
 void CMessageWindow::FocusText()
 {
-#ifdef HTML_VIEWER
 	if (mHTMLShown)
 	{
 		mHTML->Focus();
 		return;
 	}
-#endif
 	mText->Focus();
 }
 
@@ -977,7 +969,6 @@ void CMessageWindow::SetParsing(EView view)
 // Show the HTML view instead of the text, or the text
 void CMessageWindow::ShowHTML(bool show)
 {
-#ifdef HTML_VIEWER
 	if (show == mHTMLShown)
 		return;
 
@@ -998,27 +989,22 @@ void CMessageWindow::ShowHTML(bool show)
 	if (had_focus)
 		FocusText();
 	RemoteImagesChanged();
-#endif
 }
 
 // The remote images button follows the HTML view
 void CMessageWindow::RemoteImagesChanged()
 {
-#ifdef HTML_VIEWER
 	if (!mRemoteImagesBtn)
 		return;
 
 	mHTML->UpdateRemoteImagesButton(mRemoteImagesBtn, mHTMLShown);
-#endif
 }
 
 // Key for the message text, from the header fields (space, delete)
 bool CMessageWindow::BodyHandleChar(const int key, const JXKeyModifiers& modifiers)
 {
-#ifdef HTML_VIEWER
 	if (mHTMLShown)
 		return mHTML->HandleChar(key, modifiers);
-#endif
 	return mText->HandleChar(key, modifiers);
 }
 
@@ -1186,10 +1172,8 @@ void CMessageWindow::SetSecretPane(const CMessageCryptoInfo& info)
 			{
 				mText->GetScroller()->AdjustSize(0, -moveby);
 				mText->GetScroller()->Move(0, moveby);
-#ifdef HTML_VIEWER
 				mHTML->GetScroller()->AdjustSize(0, -moveby);
 				mHTML->GetScroller()->Move(0, moveby);
-#endif
 			}
 			mSecurePane->AdjustSize(0, moveby);
 		}
@@ -1200,10 +1184,8 @@ void CMessageWindow::SetSecretPane(const CMessageCryptoInfo& info)
 			{
 				mText->GetScroller()->AdjustSize(0, moveby);
 				mText->GetScroller()->Move(0, -moveby);
-#ifdef HTML_VIEWER
 				mHTML->GetScroller()->AdjustSize(0, moveby);
 				mHTML->GetScroller()->Move(0, -moveby);
-#endif
 			}
 		}
 
@@ -1868,10 +1850,8 @@ void CMessageWindow::ShowSecretPane(bool show)
 		// Shrink/move text pane
 		mText->GetScroller()->AdjustSize(0, -moveby);
 		mText->GetScroller()->Move(0, moveby);
-#ifdef HTML_VIEWER
 		mHTML->GetScroller()->AdjustSize(0, -moveby);
 		mHTML->GetScroller()->Move(0, moveby);
-#endif
 
 		// Show parts after all other changes
 		mSecurePane->Show();
@@ -1884,10 +1864,8 @@ void CMessageWindow::ShowSecretPane(bool show)
 		// Expand/move splitter
 		mText->GetScroller()->AdjustSize(0, moveby);
 		mText->GetScroller()->Move(0, -moveby);
-#ifdef HTML_VIEWER
 		mHTML->GetScroller()->AdjustSize(0, moveby);
 		mHTML->GetScroller()->Move(0, -moveby);
-#endif
 	}
 
 	mShowSecure = show;
@@ -1993,13 +1971,11 @@ void CMessageWindow::Receive(JBroadcaster* sender, const Message& message)
 			OnDecreaseFont();
 			return;
 		}		
-#ifdef HTML_VIEWER
 		else if (sender == mRemoteImagesBtn)
 		{
 			mHTML->LoadRemoteImages();
 			return;
 		}
-#endif
 	}
 	else if(message.Is(JXMenu::kItemSelected))
 	{
@@ -2534,10 +2510,8 @@ CCommander* CMessageWindow::GetTarget()
 		return mPartsTable;
 	else if (mText->HasFocus())
 		return mText;
-#ifdef HTML_VIEWER
 	else if (mHTML->HasFocus())
 		return mHTML;
-#endif
 
 	return this;
 }

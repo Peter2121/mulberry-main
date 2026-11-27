@@ -21,9 +21,9 @@ host gives it HTML, a width and a Cairo context, and receives callbacks.
 
 ## Building
 
-Built by Mulberry's normal build when the HTML viewer is enabled (the
-default; `configure --disable-html-viewer` or `scripts/build-freebsd.sh -n`
-leave it out). `Libraries/Makefile` first builds pixman, Cairo, HarfBuzz and
+Always built by Mulberry's normal build (the variant without the viewer,
+`configure --disable-html-viewer`, was dropped on 2026-11-27).
+`Libraries/Makefile` first builds pixman, Cairo, HarfBuzz and
 litehtml from their submodules into `Libraries/htmldeps` (static libraries),
 then this directory: `libHTMLView.a` and `html2png`.
 

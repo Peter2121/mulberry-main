@@ -10,16 +10,13 @@
 
 // CHTMLDisplay: shows a message part as HTML ("Format: as HTML") with the
 // HTML viewer core (Libraries/HTMLView: litehtml, Cairo, HarfBuzz), drawing
-// with Cairo on the JX window.  Read-only: no selection yet.
-//
-// Built only with the HTML viewer (configure --enable-html-viewer, the
-// default, defines HTML_VIEWER); without it Mulberry keeps its text
-// rendering of HTML.
+// with Cairo on the JX window.  Read-only: no selection yet.  Always built;
+// the preference "use the HTML viewer" chooses it at run time, otherwise
+// Mulberry keeps its text rendering of HTML.
 
 #ifndef __CHTMLDISPLAY__MULBERRY__
 #define __CHTMLDISPLAY__MULBERRY__
 
-#ifdef HTML_VIEWER
 
 #include "CCommander.h"
 #include "CLog.h"
@@ -176,6 +173,5 @@ private:
 	static double	FontSizeInPixels(Display* display, double points);
 };
 
-#endif	// HTML_VIEWER
 
 #endif

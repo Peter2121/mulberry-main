@@ -12,8 +12,6 @@
 
 #include "CHTMLDisplay.h"
 
-#ifdef HTML_VIEWER
-
 #include "CAttachment.h"
 #include "CAttachmentList.h"
 #include "CConnectionManager.h"
@@ -1206,4 +1204,3 @@ CAttachment* CHTMLDisplay::FindHTMLPart(CMessage* msg)
 	return (msg && msg->GetBody()) ? FindHTML(msg->GetBody()) : NULL;
 }
 
-#endif	// HTML_VIEWER

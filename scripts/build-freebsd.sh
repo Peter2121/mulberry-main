@@ -27,8 +27,6 @@
 #   -c DIR      Unicode CLDR directory (the one containing
 #               common/annotations/en.xml) used to generate the emoji text
 #               table; without it the table is empty
-#   -n          build without the HTML message viewer (litehtml, Cairo,
-#               HarfBuzz); meson, ninja and cmake are then not needed
 #   -h          show this help
 #
 # The build needs network access: timezone data is downloaded from IANA.
@@ -54,7 +52,6 @@ JOBS=$(sysctl -n hw.ncpu 2>/dev/null || echo 1)
 LAYOUT=		# system, user, or empty: not given
 STAGE_DIR=
 CLDR=
-HTML_VIEWER=yes
 
 set_layout() {
 	[ -z "$LAYOUT" ] || [ "$LAYOUT" = "$1" ] ||
@@ -62,7 +59,7 @@ set_layout() {
 	LAYOUT=$1
 }
 
-while getopts g:j:sud:c:nh opt; do
+while getopts g:j:sud:c:h opt; do
 	case $opt in
 	g) GCC_VERSION=$OPTARG ;;
 	j) JOBS=$OPTARG ;;
@@ -70,7 +67,6 @@ while getopts g:j:sud:c:nh opt; do
 	u) set_layout user ;;
 	d) STAGE_DIR=$OPTARG ;;
 	c) CLDR=$OPTARG ;;
-	n) HTML_VIEWER= ;;
 	h) usage; exit 0 ;;
 	*) usage >&2; exit 2 ;;
 	esac
@@ -145,18 +141,16 @@ check_requirements() {
 	if [ -n "$CLDR" ]; then
 		need /usr/local/bin/python3 python3
 	fi
-	if [ -n "$HTML_VIEWER" ]; then
-		# HTML viewer: pixman, Cairo and HarfBuzz are built with Meson,
-		# litehtml with CMake (static, inside the source tree)
-		need /usr/local/bin/meson meson
-		need /usr/local/bin/ninja ninja
-		need /usr/local/bin/cmake cmake-core
-		need /usr/local/include/png.h png
-		need /usr/local/include/X11/extensions/Xrender.h libXrender
-		# Image decoders (PNG through Cairo)
-		need /usr/local/include/jpeglib.h jpeg-turbo
-		need /usr/local/include/gif_lib.h giflib
-	fi
+	# HTML viewer: pixman, Cairo and HarfBuzz are built with Meson,
+	# litehtml with CMake (static, inside the source tree)
+	need /usr/local/bin/meson meson
+	need /usr/local/bin/ninja ninja
+	need /usr/local/bin/cmake cmake-core
+	need /usr/local/include/png.h png
+	need /usr/local/include/X11/extensions/Xrender.h libXrender
+	# Image decoders (PNG through Cairo)
+	need /usr/local/include/jpeglib.h jpeg-turbo
+	need /usr/local/include/gif_lib.h giflib
 	if [ -n "$missing" ]; then
 		die "missing packages, install them with:
     pkg install$missing"
@@ -169,9 +163,8 @@ check_requirements() {
 		note "brotli not installed: no HTTP br encoding (pkg install brotli)"
 	[ -e /usr/local/include/zstd.h ] ||
 		note "zstd not installed: no HTTP zstd encoding (pkg install zstd)"
-	if [ -n "$HTML_VIEWER" ] && [ ! -e /usr/local/include/webp/decode.h ]; then
+	[ -e /usr/local/include/webp/decode.h ] ||
 		note "libwebp not installed: no WebP images in the HTML viewer (pkg install webp)"
-	fi
 
 	# OpenSSL from ports/packages installs headers into /usr/local/include,
 	# where they shadow the base system OpenSSL.  Packaged libraries (e.g.
@@ -190,8 +183,7 @@ Remove that package and retry."
 
 check_submodules() {
 	missing=
-	set -- JX CICalendar vCard XMLLib vzic
-	[ -z "$HTML_VIEWER" ] || set -- "$@" litehtml pixman cairo harfbuzz
+	set -- JX CICalendar vCard XMLLib vzic litehtml pixman cairo harfbuzz
 	for d in "$@"; do
 		[ -e "Libraries/$d/.git" ] || missing="$missing Libraries/$d"
 	done
@@ -217,7 +209,6 @@ do_build() {
 			--with-mulberry-dir=lib/mulberry \
 			--with-help-dir=share/doc/mulberry
 	fi
-	[ -n "$HTML_VIEWER" ] || set -- "$@" --disable-html-viewer
 
 	if [ ! -x configure ] || [ configure.in -nt configure ]; then
 		note "running autoconf"

@@ -33,7 +33,6 @@ OPENSSL_DIR =
 # htmldeps/dist; the submodules themselves stay clean.  Each library is
 # configured once; later runs only rebuild what changed.
 #
-HTML_VIEWER = @HTML_VIEWER@
 
 # set this variable to something non empty to skip the build of the HTML
 # viewer's libraries (they are already built and up to date)
@@ -81,11 +80,8 @@ LITEHTML_OPTIONS = -G Ninja -DCMAKE_MAKE_PROGRAM=$(NINJA) \
 	-DCMAKE_C_COMPILER=$(HTMLDEPS_CC) -DCMAKE_CXX_COMPILER=$(HTMLDEPS_CXX) \
 	-DCMAKE_POSITION_INDEPENDENT_CODE=ON -DLITEHTML_BUILD_TESTING=OFF
 
-ifeq ($(HTML_VIEWER),yes)
-HTML_TARGETS = htmlview
-endif
 
-all: jx $(HTML_TARGETS)
+all: jx htmlview
 	for dir in $(DIRS); do \
 		$(MAKE) -C $$dir $@ || exit 1; \
 	done

@@ -543,92 +543,77 @@ AC_SUBST(OAUTH2_TOOL_LIBS)
 # git submodules and are built as static libraries in Libraries/htmldeps
 # (Meson for the first three, CMake for litehtml); the viewer core is
 # Libraries/HTMLView.  FreeType, fontconfig, libpng, zlib and the X11
-# libraries are used from the system.
+# libraries are used from the system.  Always built: the build without the
+# viewer was dropped on 2026-11-27 (a run-time preference still selects the
+# old text display, LITEHTML-VIEWER-PLAN.md).
 # ---------------------------------------------------------------------------
 
-AC_ARG_ENABLE(html-viewer,
-    [  --disable-html-viewer   build without the HTML message viewer (litehtml)],
-    [enable_html_viewer=$enableval],
-    [enable_html_viewer=yes])
-
-HTML_VIEWER=""
-HTMLVIEW_CPPFLAGS=""
-HTMLVIEW_LIBS=""
-HTMLVIEW_SYS_CFLAGS=""
-HTMLVIEW_SYS_LIBS=""
-if test "$enable_html_viewer" != "no"; then
-    AC_PATH_PROG(MESON, meson)
-    AC_PATH_PROG(NINJA, ninja)
-    AC_PATH_PROG(CMAKE, cmake)
-    if test -z "$MESON" || test -z "$NINJA" || test -z "$CMAKE"; then
-        AC_MSG_ERROR([meson, ninja and cmake are needed to build the HTML viewer (or configure with --disable-html-viewer)])
-    fi
-
-    for sub in litehtml/CMakeLists.txt pixman/meson.build cairo/meson.build harfbuzz/meson.build; do
-        if test ! -f "$srcdir/Libraries/$sub"; then
-            AC_MSG_ERROR([Libraries/$sub not found: run "git submodule update --init" (or configure with --disable-html-viewer)])
-        fi
-    done
-
-    HTMLVIEW_PKGS="fontconfig freetype2 libpng zlib x11 xext xrender"
-    AC_MSG_CHECKING([for the HTML viewer's system libraries ($HTMLVIEW_PKGS)])
-    if $PKG_CONFIG --exists $HTMLVIEW_PKGS; then
-        AC_MSG_RESULT([yes])
-    else
-        AC_MSG_RESULT([no])
-        AC_MSG_ERROR([some of $HTMLVIEW_PKGS not found by pkg-config (or configure with --disable-html-viewer)])
-    fi
-    HTMLVIEW_SYS_CFLAGS=`$PKG_CONFIG --cflags $HTMLVIEW_PKGS`
-    HTMLVIEW_SYS_LIBS="`$PKG_CONFIG --libs $HTMLVIEW_PKGS` -lunistring -lm -pthread"
-
-    # Image decoders (PNG is Cairo's own): libjpeg (libjpeg-turbo) and
-    # giflib are needed, libwebp is optional
-    AC_MSG_CHECKING([for libjpeg])
-    if $PKG_CONFIG --exists libjpeg; then
-        AC_MSG_RESULT([yes])
-        HTMLVIEW_SYS_CFLAGS="$HTMLVIEW_SYS_CFLAGS `$PKG_CONFIG --cflags libjpeg`"
-        HTMLVIEW_SYS_LIBS="$HTMLVIEW_SYS_LIBS `$PKG_CONFIG --libs libjpeg`"
-    else
-        AC_MSG_RESULT([no])
-        AC_MSG_ERROR([libjpeg (libjpeg-turbo) not found: it is needed by the HTML viewer (or configure with --disable-html-viewer)])
-    fi
-    AC_CHECK_HEADER([gif_lib.h], [],
-        AC_MSG_ERROR([gif_lib.h (giflib) not found: it is needed by the HTML viewer (or configure with --disable-html-viewer)]))
-    AC_CHECK_LIB(gif, DGifOpen, [HTMLVIEW_SYS_LIBS="$HTMLVIEW_SYS_LIBS -lgif"],
-        AC_MSG_ERROR([libgif (giflib) not found: it is needed by the HTML viewer (or configure with --disable-html-viewer)]))
-    # Remote images are downloaded with libcurl (checked above)
-    HTMLVIEW_SYS_CFLAGS="$HTMLVIEW_SYS_CFLAGS $CURL_CFLAGS"
-    HTMLVIEW_SYS_LIBS="$HTMLVIEW_SYS_LIBS $CURL_LIBS"
-    AC_MSG_CHECKING([for libwebp (optional: WebP images in the HTML viewer)])
-    if $PKG_CONFIG --exists libwebp; then
-        AC_MSG_RESULT([yes])
-        HTMLVIEW_SYS_CFLAGS="$HTMLVIEW_SYS_CFLAGS -DHTMLVIEW_WEBP `$PKG_CONFIG --cflags libwebp`"
-        HTMLVIEW_SYS_LIBS="$HTMLVIEW_SYS_LIBS `$PKG_CONFIG --libs libwebp`"
-    else
-        AC_MSG_RESULT([no])
-    fi
-
-    # Test tool html2png: the GCC run-time directory as rpath (see above)
-    HTMLVIEW_TOOL_LIBS=""
-    if test -n "$GCC_RUNTIME_DIR"; then
-        HTMLVIEW_TOOL_LIBS="-Wl,-rpath,$GCC_RUNTIME_DIR"
-    fi
-
-    # Static libraries are linked by full path: the system may have shared
-    # libcairo and libpixman-1 that a -l option could pick instead.
-    HTMLDEPS_LIBDIR="`pwd`/Libraries/htmldeps/dist/lib"
-    HTML_VIEWER="yes"
-    # Mulberry (Linux/Makefile): the viewer's interface and Cairo's headers
-    # (the widget draws with Cairo on the X window); the static archives
-    # (HTMLVIEW_LIBS, also make prerequisites) and after everything else the
-    # system libraries they need (HTMLVIEW_SYS_LIBS)
-    HTMLVIEW_CPPFLAGS="-DHTML_VIEWER -I`pwd`/Libraries/HTMLView/include -I`pwd`/Libraries/htmldeps/dist/include/cairo"
-    HTMLVIEW_LIBS="`pwd`/Libraries/HTMLView/libHTMLView.a $HTMLDEPS_LIBDIR/liblitehtml.a $HTMLDEPS_LIBDIR/libgumbo.a $HTMLDEPS_LIBDIR/libharfbuzz.a $HTMLDEPS_LIBDIR/libcairo.a $HTMLDEPS_LIBDIR/libpixman-1.a"
-    echo "HTML viewer enabled (litehtml, Cairo, HarfBuzz)"
-else
-    echo "HTML viewer disabled"
+AC_PATH_PROG(MESON, meson)
+AC_PATH_PROG(NINJA, ninja)
+AC_PATH_PROG(CMAKE, cmake)
+if test -z "$MESON" || test -z "$NINJA" || test -z "$CMAKE"; then
+    AC_MSG_ERROR([meson, ninja and cmake are needed to build the HTML viewer])
 fi
-AC_SUBST(HTML_VIEWER)
+
+for sub in litehtml/CMakeLists.txt pixman/meson.build cairo/meson.build harfbuzz/meson.build; do
+    if test ! -f "$srcdir/Libraries/$sub"; then
+        AC_MSG_ERROR([Libraries/$sub not found: run "git submodule update --init"])
+    fi
+done
+
+HTMLVIEW_PKGS="fontconfig freetype2 libpng zlib x11 xext xrender"
+AC_MSG_CHECKING([for the HTML viewer's system libraries ($HTMLVIEW_PKGS)])
+if $PKG_CONFIG --exists $HTMLVIEW_PKGS; then
+    AC_MSG_RESULT([yes])
+else
+    AC_MSG_RESULT([no])
+    AC_MSG_ERROR([some of $HTMLVIEW_PKGS not found by pkg-config])
+fi
+HTMLVIEW_SYS_CFLAGS=`$PKG_CONFIG --cflags $HTMLVIEW_PKGS`
+HTMLVIEW_SYS_LIBS="`$PKG_CONFIG --libs $HTMLVIEW_PKGS` -lunistring -lm -pthread"
+
+# Image decoders (PNG is Cairo's own): libjpeg (libjpeg-turbo) and
+# giflib are needed, libwebp is optional
+AC_MSG_CHECKING([for libjpeg])
+if $PKG_CONFIG --exists libjpeg; then
+    AC_MSG_RESULT([yes])
+    HTMLVIEW_SYS_CFLAGS="$HTMLVIEW_SYS_CFLAGS `$PKG_CONFIG --cflags libjpeg`"
+    HTMLVIEW_SYS_LIBS="$HTMLVIEW_SYS_LIBS `$PKG_CONFIG --libs libjpeg`"
+else
+    AC_MSG_RESULT([no])
+    AC_MSG_ERROR([libjpeg (libjpeg-turbo) not found: it is needed by the HTML viewer])
+fi
+AC_CHECK_HEADER([gif_lib.h], [],
+    AC_MSG_ERROR([gif_lib.h (giflib) not found: it is needed by the HTML viewer]))
+AC_CHECK_LIB(gif, DGifOpen, [HTMLVIEW_SYS_LIBS="$HTMLVIEW_SYS_LIBS -lgif"],
+    AC_MSG_ERROR([libgif (giflib) not found: it is needed by the HTML viewer]))
+# Remote images are downloaded with libcurl (checked above)
+HTMLVIEW_SYS_CFLAGS="$HTMLVIEW_SYS_CFLAGS $CURL_CFLAGS"
+HTMLVIEW_SYS_LIBS="$HTMLVIEW_SYS_LIBS $CURL_LIBS"
+AC_MSG_CHECKING([for libwebp (optional: WebP images in the HTML viewer)])
+if $PKG_CONFIG --exists libwebp; then
+    AC_MSG_RESULT([yes])
+    HTMLVIEW_SYS_CFLAGS="$HTMLVIEW_SYS_CFLAGS -DHTMLVIEW_WEBP `$PKG_CONFIG --cflags libwebp`"
+    HTMLVIEW_SYS_LIBS="$HTMLVIEW_SYS_LIBS `$PKG_CONFIG --libs libwebp`"
+else
+    AC_MSG_RESULT([no])
+fi
+
+# Test tool html2png: the GCC run-time directory as rpath (see above)
+HTMLVIEW_TOOL_LIBS=""
+if test -n "$GCC_RUNTIME_DIR"; then
+    HTMLVIEW_TOOL_LIBS="-Wl,-rpath,$GCC_RUNTIME_DIR"
+fi
+
+# Static libraries are linked by full path: the system may have shared
+# libcairo and libpixman-1 that a -l option could pick instead.
+HTMLDEPS_LIBDIR="`pwd`/Libraries/htmldeps/dist/lib"
+# Mulberry (Linux/Makefile): the viewer's interface and Cairo's headers
+# (the widget draws with Cairo on the X window); the static archives
+# (HTMLVIEW_LIBS, also make prerequisites) and after everything else the
+# system libraries they need (HTMLVIEW_SYS_LIBS)
+HTMLVIEW_CPPFLAGS="-I`pwd`/Libraries/HTMLView/include -I`pwd`/Libraries/htmldeps/dist/include/cairo"
+HTMLVIEW_LIBS="`pwd`/Libraries/HTMLView/libHTMLView.a $HTMLDEPS_LIBDIR/liblitehtml.a $HTMLDEPS_LIBDIR/libgumbo.a $HTMLDEPS_LIBDIR/libharfbuzz.a $HTMLDEPS_LIBDIR/libcairo.a $HTMLDEPS_LIBDIR/libpixman-1.a"
 AC_SUBST(MESON)
 AC_SUBST(NINJA)
 AC_SUBST(CMAKE)
