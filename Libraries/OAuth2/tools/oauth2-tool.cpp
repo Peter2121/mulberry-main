@@ -33,12 +33,15 @@
 #include "oauth2/ProviderConfig.h"
 #include "oauth2/Random.h"
 #include "oauth2/Redact.h"
+#include "oauth2/Sasl.h"
 #include "oauth2/TokenClient.h"
 #include "oauth2/Version.h"
 
+#include <curl/curl.h>
 #include <nlohmann/json.hpp>
 
 #include <errno.h>
+#include <poll.h>
 #include <signal.h>
 #include <stdlib.h>
 #include <sys/stat.h>
@@ -46,6 +49,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -113,6 +117,9 @@ void PrintUsage(std::FILE* out)
 		"  device ACCOUNT     sign in on another device (a phone) with a code, for\n"
 		"                     providers that offer it (Microsoft); keeps the token as login\n"
 		"  refresh ACCOUNT    new access token from the kept refresh token\n"
+		"  imap-check ACCOUNT refresh, then authenticate to the IMAP server with the\n"
+		"                     access token and log out\n"
+		"  smtp-check ACCOUNT the same with the SMTP server\n"
 		"  --version          versions of the tool, the library and libcurl\n"
 		"  --help             this help\n"
 		"\n"
@@ -142,6 +149,16 @@ void PrintUsage(std::FILE* out)
 		"  --verbose             log of the listener and the token requests on stderr\n"
 		"                        (secrets redacted)\n"
 		"  --show-token          print the tokens instead of their redaction\n"
+		"\n"
+		"Options of imap-check and smtp-check (and the above):\n"
+		"  --server HOST[:PORT]  the server (default: the provider's, if known)\n"
+		"  --tls, --starttls     TLS from the start (default for ports 993 and 465) or\n"
+		"                        STARTTLS (default for other ports); never without TLS\n"
+		"  --mechanism M         XOAUTH2 or OAUTHBEARER (default: the provider's first\n"
+		"                        \"sasl\" entry)\n"
+		"  --bad-token           send an invalid token instead (no refresh), to see the\n"
+		"                        server's error\n"
+
 		"\n"
 		"Exit status: 0 success, 1 nothing found or the sign-in failed, 2 usage or\n"
 		"configuration error.\n",
@@ -182,6 +199,12 @@ struct Options
 	std::string ca_file;
 	bool verbose = false;
 	bool show_token = false;
+
+	// imap-check and smtp-check
+	std::string server;
+	int tls = -1;				// -1: from the port; 1: --tls; 0: --starttls
+	std::string mechanism;
+	bool bad_token = false;
 };
 
 // Prints the permission warnings of one file; returns their number
@@ -988,18 +1011,16 @@ int CommandDevice(const Options& options)
 	return SaveSignIn(options, provider, account, scopes, response, path);
 }
 
-int CommandRefresh(const Options& options)
+// Loads the account's token file, refreshes, saves a rotated refresh token
+// at once.  details: everything the answer holds (refresh); otherwise one
+// line on the access token (imap-check, smtp-check).  Returns the exit
+// status, with provider and response set on success.
+int RefreshAccount(const Options& options, const std::string& account, bool details, oauth2::Provider& provider,
+	oauth2::TokenResponse& response)
 {
-	if (options.arguments.size() != 1 || options.arguments[0].empty())
-	{
-		std::fprintf(stderr, "%s: refresh needs one account (an e-mail address)\n", cToolName);
-		return cExitError;
-	}
-	const std::string& account = options.arguments[0];
 	oauth2::ProviderConfig config;
 	if (!LoadConfig(options, config))
 		return cExitError;
-	oauth2::Provider provider;
 	if (!FindProvider(options, config, account, provider))
 		return cExitError;
 	const std::string path = TokenFilePath(options, provider, account);
@@ -1043,7 +1064,6 @@ int CommandRefresh(const Options& options)
 	std::printf("token file: %s (saved %s)\n", oauth2::DisplayPath(path).c_str(), file.saved_at.c_str());
 	std::fflush(stdout);
 
-	oauth2::TokenResponse response;
 	oauth2::TokenError token_error;
 	if (!oauth2::RefreshToken(oauth2::TokenEndpointOf(provider), file.refresh_token, scopes, http, response,
 			token_error))
@@ -1054,7 +1074,12 @@ int CommandRefresh(const Options& options)
 				"    sign in again with: %s login %s\n", cToolName, account.c_str());
 		return cExitFailed;
 	}
-	const std::string address = PrintTokens(options, provider, scopes, response, account);
+	std::string address;
+	if (details)
+		address = PrintTokens(options, provider, scopes, response, account);
+	else
+		std::printf("access token: %s, expires in %ld s\n", ShowSecret(options, response.access_token).c_str(),
+			response.expires_in);
 
 	const bool rotated = !response.refresh_token.empty() && response.refresh_token != file.refresh_token;
 	const bool scopes_changed = response.scope_given &&
@@ -1070,7 +1095,8 @@ int CommandRefresh(const Options& options)
 		file.email = address;
 	if (!rotated && !scopes_changed)
 	{
-		std::printf("refresh token: unchanged\n");
+		if (details)
+			std::printf("refresh token: unchanged\n");
 		return 0;
 	}
 	file.saved_at = UtcNow();
@@ -1088,11 +1114,450 @@ int CommandRefresh(const Options& options)
 	return 0;
 }
 
+int CommandRefresh(const Options& options)
+{
+	if (options.arguments.size() != 1 || options.arguments[0].empty())
+	{
+		std::fprintf(stderr, "%s: refresh needs one account (an e-mail address)\n", cToolName);
+		return cExitError;
+	}
+	oauth2::Provider provider;
+	oauth2::TokenResponse response;
+	return RefreshAccount(options, options.arguments[0], true, provider, response);
+}
+
+// ---------------------------------------------------------------------------
+// imap-check and smtp-check (task 1.8): a libcurl session that only
+// authenticates and logs out, independent of Mulberry's protocol code
+// ---------------------------------------------------------------------------
+
+struct MailServer
+{
+	std::string host;
+	long port = 0;
+	bool implicit_tls = true;
+};
+
+// The shipped providers' servers (OAUTH2-PLAN.md, section 8, "Baseline
+// mechanisms"); Microsoft 365: --server smtp.office365.com:587
+bool KnownMailServer(const std::string& provider_id, bool smtp, MailServer& server)
+{
+	struct Known
+	{
+		const char* provider;
+		const char* imap;
+		const char* smtp;
+		long smtp_port;
+	};
+	static const Known cKnown[] = {
+		{ "google", "imap.gmail.com", "smtp.gmail.com", 465 },
+		{ "microsoft", "outlook.office365.com", "smtp-mail.outlook.com", 587 },
+		{ "yahoo", "imap.mail.yahoo.com", "smtp.mail.yahoo.com", 465 },
+	};
+	for (const Known& known : cKnown)
+	{
+		if (provider_id != known.provider)
+			continue;
+		server.host = smtp ? known.smtp : known.imap;
+		server.port = smtp ? known.smtp_port : 993;
+		return true;
+	}
+	return false;
+}
+
+// "host[:port]"; false after the message
+bool ParseMailServer(const Options& options, const oauth2::Provider& provider, bool smtp, MailServer& server)
+{
+	if (options.server.empty())
+	{
+		if (!KnownMailServer(provider.id, smtp, server))
+		{
+			std::fprintf(stderr, "%s: no known %s server for %s: name it with --server HOST[:PORT]\n", cToolName,
+				smtp ? "SMTP" : "IMAP", provider.id.c_str());
+			return false;
+		}
+	}
+	else
+	{
+		const std::string& text = options.server;
+		const size_t colon = text.rfind(':');
+		server.host = text.substr(0, colon);
+		server.port = smtp ? 465 : 993;
+		if (colon != std::string::npos)
+		{
+			char* end = nullptr;
+			const std::string port = text.substr(colon + 1);
+			server.port = std::strtol(port.c_str(), &end, 10);
+			if (port.empty() || *end != '\0' || server.port <= 0 || server.port > 65535)
+				server.host.clear();
+		}
+		const bool plain = !server.host.empty() && std::all_of(server.host.begin(), server.host.end(),
+			[](char c) { return std::isalnum((unsigned char) c) || c == '.' || c == '-'; });
+		if (!plain)
+		{
+			std::fprintf(stderr, "%s: --server needs HOST or HOST:PORT (a name or IPv4 address, a port from 1 "
+				"to 65535)\n", cToolName);
+			return false;
+		}
+	}
+	server.implicit_tls = options.tls >= 0 ? options.tls == 1 : (server.port == 993 || server.port == 465);
+	return true;
+}
+
+// What the session saw, for the log and the final message
+struct MailSession
+{
+	bool smtp = false;
+	bool verbose = false;
+	bool in_auth = false;			// between AUTHENTICATE/AUTH and its result
+	bool response_sent = false;		// the token went out: a challenge now is an error
+	bool challenge_seen = false;
+	oauth2::SaslError challenge;
+	std::string challenge_problem;	// a challenge that was not readable
+	std::string auth_reply;			// the server's line that ended the authentication
+	std::string last_reply;			// the server's last final line
+	std::string front_end;			// Microsoft: the server named in the greeting
+};
+
+// Microsoft's IMAP greeting ends with the front-end server's name as
+// base64 of UTF-16LE: "... BACKENDAUTHENTICATE) [TQBSADEA...]"; empty if
+// the line has no such name
+std::string GreetingFrontEnd(const std::string& line)
+{
+	const size_t open = line.rfind('[');
+	const size_t close = line.rfind(']');
+	if (line.find("BACKENDAUTHENTICATE") == std::string::npos || open == std::string::npos ||
+		close == std::string::npos || close < open)
+		return std::string();
+	std::string bytes;
+	if (!oauth2::Base64Decode(line.substr(open + 1, close - open - 1), bytes) || bytes.empty() || bytes.size() % 2)
+		return std::string();
+	std::string name;
+	for (size_t i = 0; i < bytes.size(); i += 2)
+	{
+		const unsigned char c = (unsigned char) bytes[i];
+		if (bytes[i + 1] != 0 || c <= 0x20 || c >= 0x7f)
+			return std::string();
+		name += (char) c;
+	}
+	return name;
+}
+
+bool StartsWithNoCase(const std::string& text, const std::string& prefix)
+{
+	if (text.size() < prefix.size())
+		return false;
+	for (size_t i = 0; i < prefix.size(); ++i)
+		if (std::toupper((unsigned char) text[i]) != std::toupper((unsigned char) prefix[i]))
+			return false;
+	return true;
+}
+
+// A command line for the log: the SASL response replaced by its redaction
+std::string RedactMailCommand(MailSession& session, const std::string& line)
+{
+	std::vector<std::string> words;
+	std::stringstream stream(line);
+	std::string word;
+	while (stream >> word)
+		words.push_back(word);
+	for (size_t i = 0; i < words.size() && i < 2; ++i)
+	{
+		if (StartsWithNoCase(words[i], "AUTHENTICATE") || (StartsWithNoCase(words[i], "AUTH") && words[i].size() == 4))
+		{
+			session.in_auth = true;
+			session.response_sent = words.size() > i + 2;
+			if (words.size() <= i + 2)
+				return line;
+			std::string result;
+			for (size_t j = 0; j <= i + 1; ++j)
+				result += words[j] + " ";
+			return result + oauth2::Redact(line.substr(line.find(words[i + 2], line.find(words[i + 1]) +
+				words[i + 1].size())));
+		}
+	}
+	// A response sent after the server's challenge; "AQ==" and "*" are not
+	// secret
+	if (session.in_auth)
+	{
+		session.response_sent = true;
+		if (line.size() > 4)
+			return oauth2::Redact(line);
+	}
+	return line;
+}
+
+// A server line: the error challenge (a challenge after the token went
+// out), the line that ends the authentication and the last final line are
+// kept
+void ReadMailReply(MailSession& session, const std::string& line)
+{
+	const bool smtp = session.smtp;
+	const bool continuation = smtp ? line.compare(0, 3, "334") == 0 : line.compare(0, 1, "+") == 0;
+	if (continuation)
+	{
+		const size_t skip = smtp ? 4 : 2;
+		const std::string payload = line.size() > skip ? line.substr(skip) : std::string();
+		if (session.in_auth && session.response_sent && !payload.empty())
+		{
+			oauth2::SaslError error;
+			std::string problem;
+			if (oauth2::ParseSaslErrorChallenge(payload, error, problem))
+			{
+				session.challenge = error;
+				session.challenge_seen = true;
+			}
+			else
+				session.challenge_problem = problem;
+		}
+		return;
+	}
+	if (!smtp && session.front_end.empty() && line.compare(0, 5, "* OK ") == 0)
+		session.front_end = GreetingFrontEnd(line);
+	// IMAP untagged data, SMTP lines followed by others: not final
+	if ((!smtp && line.compare(0, 2, "* ") == 0) || (smtp && line.size() > 3 && line[3] == '-'))
+		return;
+	if (session.in_auth)
+		session.auth_reply = line;
+	session.last_reply = line;
+	session.in_auth = false;
+}
+
+extern "C" int MailDebug(CURL*, curl_infotype type, char* data, size_t size, void* user)
+{
+	MailSession& session = *static_cast<MailSession*>(user);
+	std::string chunk(data, size);
+	if (type != CURLINFO_TEXT && type != CURLINFO_HEADER_IN && type != CURLINFO_HEADER_OUT)
+		return 0;
+	size_t start = 0;
+	while (start < chunk.size())
+	{
+		size_t end = chunk.find('\n', start);
+		if (end == std::string::npos)
+			end = chunk.size();
+		std::string line = chunk.substr(start, end - start);
+		start = end + 1;
+		if (!line.empty() && line.back() == '\r')
+			line.pop_back();
+		if (line.empty() && type == CURLINFO_TEXT)
+			continue;
+		std::string shown = line;
+		if (type == CURLINFO_HEADER_OUT)
+			shown = RedactMailCommand(session, line);
+		else if (type == CURLINFO_HEADER_IN)
+			ReadMailReply(session, line);
+		if (session.verbose)
+			std::fprintf(stderr, "%s %s\n", type == CURLINFO_TEXT ? "*" : type == CURLINFO_HEADER_IN ? "<" : ">",
+				shown.c_str());
+	}
+	return 0;
+}
+
+// Waits until the connection's socket can be read (or written); false
+// after the time limit
+bool WaitForSocket(CURL* easy, bool write, int timeout_ms)
+{
+	curl_socket_t socket = CURL_SOCKET_BAD;
+	if (curl_easy_getinfo(easy, CURLINFO_ACTIVESOCKET, &socket) != CURLE_OK || socket == CURL_SOCKET_BAD)
+		return false;
+	struct pollfd fd;
+	fd.fd = socket;
+	fd.events = write ? POLLOUT : POLLIN;
+	fd.revents = 0;
+	return poll(&fd, 1, timeout_ms) > 0;
+}
+
+// LOGOUT or QUIT on the authenticated connection, which libcurl's
+// connect-only mode would close without them; returns the server's final
+// line, empty if none came within 5 seconds
+std::string MailLogout(CURL* easy, MailSession& session)
+{
+	const std::string command = session.smtp ? "QUIT" : "A999 LOGOUT";
+	const std::string wire = command + "\r\n";
+	if (session.verbose)
+		std::fprintf(stderr, "> %s\n", command.c_str());
+	size_t sent = 0;
+	while (sent < wire.size())
+	{
+		size_t n = 0;
+		const CURLcode result = curl_easy_send(easy, wire.data() + sent, wire.size() - sent, &n);
+		if (result == CURLE_AGAIN)
+		{
+			if (!WaitForSocket(easy, true, 5000))
+				return std::string();
+			continue;
+		}
+		if (result != CURLE_OK)
+			return std::string();
+		sent += n;
+	}
+
+	std::string buffer;
+	for (int rounds = 0; rounds < 100; ++rounds)
+	{
+		char data[1024];
+		size_t n = 0;
+		const CURLcode result = curl_easy_recv(easy, data, sizeof(data), &n);
+		if (result == CURLE_AGAIN)
+		{
+			if (!WaitForSocket(easy, false, 5000))
+				return std::string();
+			continue;
+		}
+		if (result != CURLE_OK || n == 0)
+			return std::string();
+		buffer.append(data, n);
+		size_t end;
+		while ((end = buffer.find('\n')) != std::string::npos)
+		{
+			std::string line = buffer.substr(0, end);
+			buffer.erase(0, end + 1);
+			if (!line.empty() && line.back() == '\r')
+				line.pop_back();
+			if (session.verbose)
+				std::fprintf(stderr, "< %s\n", line.c_str());
+			const bool final = session.smtp ? (line.size() >= 4 && line[3] == ' ') : line.compare(0, 5, "A999 ") == 0;
+			if (final)
+				return line;
+		}
+	}
+	return std::string();
+}
+
+int CommandMailCheck(const Options& options, bool smtp)
+{
+	const char* const command = smtp ? "smtp-check" : "imap-check";
+	const char* const protocol = smtp ? "SMTP" : "IMAP";
+	if (options.arguments.size() != 1 || options.arguments[0].empty())
+	{
+		std::fprintf(stderr, "%s: %s needs one account (an e-mail address)\n", cToolName, command);
+		return cExitError;
+	}
+	const std::string& account = options.arguments[0];
+
+	// libcurl must know the protocol, with TLS
+	const curl_version_info_data* curl = curl_version_info(CURLVERSION_NOW);
+	bool supported = false;
+	for (const char* const* name = curl->protocols; name && *name; ++name)
+		if (std::string(*name) == (smtp ? "smtps" : "imaps"))
+			supported = true;
+	if (!supported)
+	{
+		std::fprintf(stderr, "%s: this libcurl has no %s with TLS\n", cToolName, protocol);
+		return cExitError;
+	}
+
+	oauth2::Provider provider;
+	oauth2::TokenResponse response;
+	std::string token;
+	if (options.bad_token)
+	{
+		oauth2::ProviderConfig config;
+		if (!LoadConfig(options, config) || !FindProvider(options, config, account, provider))
+			return cExitError;
+		std::printf("provider: %s (%s)\naccount: %s\n", provider.id.c_str(), provider.name.c_str(), account.c_str());
+		token = "invalid-token-for-the-check";
+		std::printf("access token: %s (--bad-token)\n", token.c_str());
+	}
+	else
+	{
+		const int status = RefreshAccount(options, account, false, provider, response);
+		if (status != 0)
+			return status;
+		token = response.access_token;
+	}
+	MailServer server;
+	if (!ParseMailServer(options, provider, smtp, server))
+		return cExitError;
+	const std::string mechanism = !options.mechanism.empty() ? options.mechanism :
+		!provider.sasl.empty() ? provider.sasl.front() : std::string(oauth2::cSaslXOAuth2);
+	std::printf("server: %s:%ld (%s, %s)\n", server.host.c_str(), server.port, protocol,
+		server.implicit_tls ? "TLS" : "STARTTLS");
+	std::printf("mechanism: %s\n", mechanism.c_str());
+	std::fflush(stdout);
+
+	curl_global_init(CURL_GLOBAL_DEFAULT);
+	CURL* easy = curl_easy_init();
+	if (!easy)
+	{
+		std::fprintf(stderr, "%s: libcurl could not start\n", cToolName);
+		return cExitFailed;
+	}
+	// SMTP: the URL path is the EHLO name, instead of this computer's name
+	// (as Thunderbird does)
+	const std::string url = std::string(smtp ? "smtp" : "imap") + (server.implicit_tls ? "s" : "") + "://" +
+		server.host + ":" + std::to_string(server.port) + (smtp ? "/%5B127.0.0.1%5D" : "/");
+	const std::string login_options = "AUTH=" + mechanism;
+	MailSession session;
+	session.smtp = smtp;
+	session.verbose = options.verbose;
+	char errors[CURL_ERROR_SIZE] = "";
+	curl_easy_setopt(easy, CURLOPT_URL, url.c_str());
+	curl_easy_setopt(easy, CURLOPT_PROTOCOLS_STR, smtp ? "smtp,smtps" : "imap,imaps");
+	curl_easy_setopt(easy, CURLOPT_USE_SSL, (long) CURLUSESSL_ALL);
+	curl_easy_setopt(easy, CURLOPT_SSL_VERIFYPEER, 1L);
+	curl_easy_setopt(easy, CURLOPT_SSL_VERIFYHOST, 2L);
+	if (!options.ca_file.empty())
+		curl_easy_setopt(easy, CURLOPT_CAINFO, options.ca_file.c_str());
+	curl_easy_setopt(easy, CURLOPT_PROXY, "");
+	curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L);
+	curl_easy_setopt(easy, CURLOPT_CONNECTTIMEOUT, 15L);
+	curl_easy_setopt(easy, CURLOPT_TIMEOUT, 30L);
+	curl_easy_setopt(easy, CURLOPT_USERNAME, account.c_str());
+	curl_easy_setopt(easy, CURLOPT_XOAUTH2_BEARER, token.c_str());
+	curl_easy_setopt(easy, CURLOPT_LOGIN_OPTIONS, login_options.c_str());
+	curl_easy_setopt(easy, CURLOPT_SASL_IR, 1L);
+	// The connection phase of IMAP and SMTP includes the authentication
+	curl_easy_setopt(easy, CURLOPT_CONNECT_ONLY, 1L);
+	curl_easy_setopt(easy, CURLOPT_ERRORBUFFER, errors);
+	curl_easy_setopt(easy, CURLOPT_VERBOSE, 1L);
+	curl_easy_setopt(easy, CURLOPT_DEBUGFUNCTION, MailDebug);
+	curl_easy_setopt(easy, CURLOPT_DEBUGDATA, &session);
+
+	const CURLcode result = curl_easy_perform(easy);
+	std::string logout;
+	if (result == CURLE_OK)
+		logout = MailLogout(easy, session);
+	curl_easy_cleanup(easy);
+	if (!session.front_end.empty())
+		std::printf("front end: %s\n", session.front_end.c_str());
+
+	if (result == CURLE_OK)
+	{
+		std::printf("authenticated: yes (%s)\n", session.auth_reply.c_str());
+		std::printf("logged out: %s\n", logout.empty() ? "no answer to the logout" : logout.c_str());
+		return 0;
+	}
+	if (result == CURLE_LOGIN_DENIED)
+	{
+		std::fprintf(stderr, "%s: %s:%ld refused the authentication\n", cToolName, server.host.c_str(), server.port);
+		if (session.challenge_seen)
+			std::fprintf(stderr, "    error challenge: %s\n", session.challenge.Describe().c_str());
+		else if (!session.challenge_problem.empty())
+			std::fprintf(stderr, "    error challenge: %s\n", session.challenge_problem.c_str());
+		if (!session.auth_reply.empty())
+			std::fprintf(stderr, "    server: %s\n", session.auth_reply.c_str());
+		else if (session.challenge_seen)
+			// libcurl answers the challenge for OAUTHBEARER only
+			std::fprintf(stderr, "    server: no final reply (libcurl closed the connection after the "
+				"challenge)\n");
+		if (errors[0])
+			std::fprintf(stderr, "    libcurl: %s\n", errors);
+		return cExitFailed;
+	}
+	std::fprintf(stderr, "%s: %s check failed: %s%s%s\n", cToolName, protocol, curl_easy_strerror(result),
+		errors[0] ? ": " : "", errors);
+	if (!session.last_reply.empty())
+		std::fprintf(stderr, "    server: %s\n", session.last_reply.c_str());
+	return cExitFailed;
+}
+
 // Options that take a value
 bool TakesValue(const std::string& arg)
 {
 	static const char* const cNames[] = { "--system-config", "--user-config", "--provider", "--client-id",
-		"--tenant", "--services", "--prompt", "--timeout", "--token-file", "--ca-file" };
+		"--tenant", "--services", "--prompt", "--timeout", "--token-file", "--ca-file", "--server",
+		"--mechanism" };
 	return std::find(std::begin(cNames), std::end(cNames), arg) != std::end(cNames);
 }
 
@@ -1181,6 +1646,26 @@ bool ParseOptions(int argc, char* argv[], Options& options)
 			options.verbose = true;
 		else if (arg == "--show-token")
 			options.show_token = true;
+		else if (arg == "--server")
+			options.server = argv[++i];
+		else if (arg == "--tls")
+			options.tls = 1;
+		else if (arg == "--starttls")
+			options.tls = 0;
+		else if (arg == "--mechanism")
+		{
+			options.mechanism = argv[++i];
+			for (char& c : options.mechanism)
+				c = (char) std::toupper((unsigned char) c);
+			if (options.mechanism != oauth2::cSaslXOAuth2 && options.mechanism != oauth2::cSaslOAuthBearer)
+			{
+				std::fprintf(stderr, "%s: --mechanism needs XOAUTH2 or OAUTHBEARER\n", cToolName);
+				return false;
+			}
+		}
+		else if (arg == "--bad-token")
+			options.bad_token = true;
+
 		else
 		{
 			std::fprintf(stderr, "%s: unknown option \"%s\"\n", cToolName, arg.c_str());
@@ -1225,6 +1710,10 @@ int main(int argc, char* argv[])
 		return CommandDevice(options);
 	if (options.command == "refresh")
 		return CommandRefresh(options);
+	if (options.command == "imap-check")
+		return CommandMailCheck(options, false);
+	if (options.command == "smtp-check")
+		return CommandMailCheck(options, true);
 
 	if (!options.command.empty())
 		std::fprintf(stderr, "%s: unknown command \"%s\"\n", cToolName, options.command.c_str());

@@ -49,7 +49,7 @@ TOOL_CPPFLAGS = -DOAUTH2_TOOL_APP_ID='"$(APP_ID)"' \
 
 LIBRARY = libOAuth2$A
 SOURCES = Identity Version Encoding Random Pkce Redact Paths Permissions Provider \
-	ProviderConfig JsonIndex HttpClient TokenClient DeviceCode Listener Authorization IdToken Browser
+	ProviderConfig JsonIndex HttpClient TokenClient DeviceCode Listener Authorization IdToken Browser Sasl
 OBJS = $(SOURCES:%=obj/%$O)
 
 CONFDIR = $(DESTDIR)$(SYSCONFDIR)/$(APP_ID)

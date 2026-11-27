@@ -14,6 +14,7 @@
 
 #include "oauth2/Authorization.h"
 #include "oauth2/DeviceCode.h"
+#include "oauth2/Sasl.h"
 #include "oauth2/Encoding.h"
 #include "oauth2/IdToken.h"
 #include "oauth2/Identity.h"
@@ -1304,6 +1305,90 @@ std::string MakeJwt(const std::string& payload)
 		oauth2::Base64UrlEncode(payload) + ".c2lnbmF0dXJl";
 }
 
+// Standard base64 (RFC 4648 section 10 vectors) and the SASL payloads and
+// error challenges (task 1.8)
+void TestSasl()
+{
+	const char* const vectors[][2] = { { "", "" }, { "f", "Zg==" }, { "fo", "Zm8=" }, { "foo", "Zm9v" },
+		{ "foob", "Zm9vYg==" }, { "fooba", "Zm9vYmE=" }, { "foobar", "Zm9vYmFy" } };
+	for (const auto& v : vectors)
+	{
+		std::string out = "x";
+		CHECK(oauth2::Base64Encode(v[0]) == v[1]);
+		CHECK(oauth2::Base64Decode(v[1], out) && out == v[0]);
+	}
+	std::string out;
+	CHECK(oauth2::Base64Encode(std::string("\xfb\xff\xbf", 3)) == "+/+/");
+	CHECK(oauth2::Base64Decode("+/+/", out) && out == std::string("\xfb\xff\xbf", 3));
+	CHECK(oauth2::Base64Decode("Zm8", out) && out == "fo");			// padding left out
+	out = "kept";
+	for (const char* bad : { "Zm8=Zm8=", "Zg=", "Zg===", "Z===", "-_-_", "Zm 9v", "Zm9v\r\n", "Zh==", "Z" })
+		CHECK(!oauth2::Base64Decode(bad, out) && out == "kept");
+
+	// Byte for byte: RFC 7628 section 4.1 (IMAP port 143, SMTP port 587)
+	CHECK(std::string(oauth2::cSaslOAuthBearer) == "OAUTHBEARER" && std::string(oauth2::cSaslXOAuth2) == "XOAUTH2");
+	const std::string rfcToken = "vF9dft4qmTc2Nvb3RlckBhbHRhdmlzdGEuY29tCg==";
+	const std::string imap = oauth2::OAuthBearerResponse("user@example.com", "server.example.com", 143, rfcToken);
+	CHECK(imap == std::string("n,a=user@example.com,\x01host=server.example.com\x01port=143\x01"
+		"auth=Bearer vF9dft4qmTc2Nvb3RlckBhbHRhdmlzdGEuY29tCg==\x01\x01"));
+	CHECK(oauth2::Base64Encode(imap) == "bixhPXVzZXJAZXhhbXBsZS5jb20sAWhvc3Q9c2VydmVyLmV4YW1wbGUuY29tAXBvcnQ9MTQzAWF1dGg9"
+		"QmVhcmVyIHZGOWRmdDRxbVRjMk52YjNSbGNrQmhiSFJoZG1semRHRXVZMjl0Q2c9PQEB");
+	CHECK(oauth2::Base64Encode(oauth2::OAuthBearerResponse("user@example.com", "server.example.com", 587, rfcToken)) ==
+		"bixhPXVzZXJAZXhhbXBsZS5jb20sAWhvc3Q9c2VydmVyLmV4YW1wbGUuY29tAXBvcnQ9NTg3AWF1dGg9QmVhcmVyIHZGOWRmdDRxbVRjMk52"
+		"YjNSbGNrQmhiSFJoZG1semRHRXVZMjl0Q2c9PQEB");
+	// Google's XOAUTH2 example
+	const std::string google = oauth2::XOAuth2Response("someuser@example.com",
+		"ya29.vF9dft4qmTc2Nvb3RlckBhdHRhdmlzdGEuY29tCg");
+	CHECK(google == std::string("user=someuser@example.com\x01" "auth=Bearer ya29.vF9dft4qmTc2Nvb3RlckBhdHRhdmlzdGEuY29tCg"
+		"\x01\x01"));
+	CHECK(oauth2::Base64Encode(google) == "dXNlcj1zb21ldXNlckBleGFtcGxlLmNvbQFhdXRoPUJlYXJlciB5YTI5LnZGOWRmdDRxbVRjMk52"
+		"YjNSbGNrQmhkSFJoZG1semRHRXVZMjl0Q2cBAQ==");
+
+	// Optional pairs, saslname escaping, refused inputs
+	CHECK(oauth2::OAuthBearerResponse("u", "", 0, "t") == std::string("n,a=u,\x01" "auth=Bearer t\x01\x01"));
+	CHECK(oauth2::OAuthBearerResponse("u", "h", 0, "t") == std::string("n,a=u,\x01host=h\x01" "auth=Bearer t\x01\x01"));
+	CHECK(oauth2::Gs2SaslName("a,b=c@d") == "a=2Cb=3Dc@d");
+	CHECK(oauth2::OAuthBearerResponse("a,b=c", "h", 1, "t").compare(0, 14, "n,a=a=2Cb=3Dc,") == 0);
+	CHECK(oauth2::XOAuth2Response("", "t").empty() && oauth2::XOAuth2Response("u", "").empty());
+	CHECK(oauth2::XOAuth2Response("u\x01" "auth=Bearer x", "t").empty());
+	CHECK(oauth2::XOAuth2Response("u", "t\r\nA2 LOGOUT").empty());
+	CHECK(oauth2::OAuthBearerResponse("u", "h\x01port=1", 1, "t").empty());
+	CHECK(oauth2::OAuthBearerResponse("u", "h", 1, "t\x01").empty() && oauth2::OAuthBearerResponse("", "h", 1, "t").empty());
+
+	// The reply to an error challenge
+	CHECK(oauth2::SaslErrorReply("OAUTHBEARER") == "\x01" && oauth2::SaslErrorReply("oauthbearer") == "\x01");
+	CHECK(oauth2::Base64Encode(oauth2::SaslErrorReply(oauth2::cSaslOAuthBearer)) == "AQ==");
+	CHECK(oauth2::SaslErrorReply("XOAUTH2").empty() && oauth2::SaslErrorReply("PLAIN").empty());
+
+	// Error challenges: RFC 7628 section 4.3 (IMAP) and 4.4 (SMTP), Google
+	oauth2::SaslError e;
+	std::string message;
+	CHECK(oauth2::ParseSaslErrorChallenge("eyJzdGF0dXMiOiJpbnZhbGlkX3Rva2VuIiwic2NvcGUiOiJleGFtcGxlX3Njb3BlIiwib3BlbmlkLWNv"
+		"bmZpZ3VyYXRpb24iOiJodHRwczovL2V4YW1wbGUuY29tLy53ZWxsLWtub3duL29wZW5pZC1jb25maWd1cmF0aW9uIn0=", e, message));
+	CHECK(e.status == "invalid_token" && e.scope == "example_scope" && e.schemes.empty() &&
+		e.openid_configuration == "https://example.com/.well-known/openid-configuration");
+	CHECK(e.Describe() == "status invalid_token (the access token is invalid or expired), scope example_scope, "
+		"provider https://example.com/.well-known/openid-configuration");
+	CHECK(oauth2::ParseSaslErrorChallenge("eyJzdGF0dXMiOiJpbnZhbGlkX3Rva2VuIiwic2NoZW1lcyI6ImJlYXJlciBtYWMiLCJzY29wZSI6"
+		"Imh0dHBzOi8vbWFpbC5leGFtcGxlLmNvbS8ifQ==", e, message));
+	CHECK(e.status == "invalid_token" && e.schemes == "bearer mac" && e.scope == "https://mail.example.com/" &&
+		e.openid_configuration.empty());
+	CHECK(oauth2::ParseSaslErrorChallenge("eyJzdGF0dXMiOiI0MDEiLCJzY2hlbWVzIjoiYmVhcmVyIG1hYyIsInNjb3BlIjoiaHR0cHM6Ly9t"
+		"YWlsLmdvb2dsZS5jb20vIn0K\r\n", e, message));
+	CHECK(e.status == "401" && e.schemes == "bearer mac" && e.scope == "https://mail.google.com/");
+	CHECK(e.Describe() == "status 401 (the access token is invalid or expired), scope https://mail.google.com/, "
+		"schemes bearer mac");
+	// Not base64, not an object; members of other types ignored; texts cleaned
+	const oauth2::SaslError before = e;
+	CHECK(!oauth2::ParseSaslErrorChallenge("", e, message) && message == "the server's challenge is not base64");
+	CHECK(!oauth2::ParseSaslErrorChallenge("not base64!", e, message) && e.status == before.status);
+	CHECK(!oauth2::ParseSaslErrorChallenge(oauth2::Base64Encode("[\"S3CR3T\"]"), e, message) &&
+		message == "the server's challenge is not a JSON object (10 bytes)" && e.status == before.status);
+	CHECK(oauth2::ParseSaslErrorChallenge(oauth2::Base64Encode("{\"status\":400,\"scope\":\"a\\u001b[2Jb\\nc\"}"),
+		e, message));
+	CHECK(e.status.empty() && e.scope == "a [2Jb" && e.Describe() == "status not given, scope a [2Jb");
+}
+
 // Device authorization answers and poll results (task 1.7)
 void TestDeviceCode()
 {
@@ -1504,6 +1589,7 @@ int main()
 	TestAuthorizationUrl();
 	TestIdToken();
 	TestDeviceCode();
+	TestSasl();
 
 	if (sFailures != 0)
 	{

@@ -1,7 +1,7 @@
 #!/bin/sh
 #
-# Tests of "oauth2-tool login", "device" and "refresh" (OAUTH2-PLAN.md,
-# tasks 1.6 and 1.7) without a provider: the mock token endpoint over TLS
+# Tests of "oauth2-tool login", "device", "refresh", "imap-check" and
+# "smtp-check" (OAUTH2-PLAN.md, tasks 1.6 to 1.8) without a provider: the mock token endpoint over TLS
 # (token-server.py), a fake xdg-open, and a fake browser (fake-browser.py)
 # that brings a code back to the tool's listener.  Checks the authorization
 # URL, the browser launch without a shell, the client check, the code
@@ -479,6 +479,90 @@ check "device: Ctrl-C cancels the wait" sh -c "[ \"\$(cat '$OUT/devint.status')\
 run devnone none bin-none device user@example.org
 check "device: a provider without device code: exit 2, login suggested" sh -c "[ \"\$(cat '$OUT/devnone.status')\" = 2 ] &&
 	grep -q 'Mock offers no device code sign-in .*use oauth2-tool login' '$OUT/devnone.err'"
+
+# 9. imap-check and smtp-check (task 1.8): mail-server.py, IMAP over TLS and
+# SMTP with STARTTLS; the token of other.json (mock provider)
+MLOG=$OUT/mail-requests.jsonl
+: > "$MLOG"
+"$PYTHON" -I "$TESTDIR/mail-server.py" "$MLOG" "$OUT/mail-ports" "$OUT/cert.pem" "$OUT/key.pem" &
+MAILSERVER=$!
+trap 'kill $SERVER $MAILSERVER 2>/dev/null' EXIT INT TERM
+i=0
+while [ ! -s "$OUT/mail-ports" ] && [ $i -lt 50 ]; do
+	sleep 0.1
+	i=$((i + 1))
+done
+read IMAPPORT SMTPPORT < "$OUT/mail-ports"
+# mail_last FIELD...: those fields of the mail server's last exchange
+mail_last() {
+	"$PYTHON" -I -c 'import json, sys
+entries = [json.loads(l) for l in open(sys.argv[1]) if "result" in l]
+print(" ".join(str(entries[-1].get(f)) for f in sys.argv[2:]))' "$MLOG" "$@"
+}
+mailcheck() {
+	# mailcheck NAME imap|smtp [ARGS...]
+	name=$1
+	proto=$2
+	shift 2
+	if [ "$proto" = imap ]; then
+		set -- --server "127.0.0.1:$IMAPPORT" --tls "$@"
+	else
+		set -- --server "127.0.0.1:$SMTPPORT" "$@"
+	fi
+	run "$name" none bin-none "$proto-check" --token-file "$OUT/other.json" "$@" user@example.org
+}
+mailcheck imapx imap
+mail_last protocol mechanism user result initial_response > "$OUT/imapx.mail"
+check "imap-check: refresh, XOAUTH2 (the provider's default), logged out" sh -c "[ \"\$(cat '$OUT/imapx.status')\" = 0 ] &&
+	grep -q '^access token: <redacted' '$OUT/imapx.out' && grep -q -x 'mechanism: XOAUTH2' '$OUT/imapx.out' &&
+	grep -q -x 'server: 127.0.0.1:$IMAPPORT (IMAP, TLS)' '$OUT/imapx.out' &&
+	grep -q '^authenticated: yes (A002 OK \[CAPABILITY IMAP4rev1\] Authenticated)' '$OUT/imapx.out' &&
+	grep -q -x 'logged out: A999 OK LOGOUT completed' '$OUT/imapx.out' &&
+	grep -q -x 'front end: MOCK1P01CA0001.EXAMPLE' '$OUT/imapx.out' &&
+	[ \"\$(cat '$OUT/imapx.mail')\" = 'imap XOAUTH2 user@example.org accepted True' ] &&
+	grep -q '\"command\": \"LOGOUT\"' '$MLOG'"
+mailcheck imapb imap --mechanism oauthbearer --verbose
+mail_last mechanism result pairs > "$OUT/imapb.mail"
+check "imap-check OAUTHBEARER: host and port sent, token redacted in the log" sh -c "[ \"\$(cat '$OUT/imapb.status')\" = 0 ] &&
+	[ \"\$(cat '$OUT/imapb.mail')\" = \"OAUTHBEARER accepted {'host': '127.0.0.1', 'port': '$IMAPPORT'}\" ] &&
+	grep -q '^> A002 AUTHENTICATE OAUTHBEARER <redacted [0-9]* bytes>\$' '$OUT/imapb.err' &&
+	! grep -q S3CR3T '$OUT/imapb.out' '$OUT/imapb.err'"
+mailcheck smtpx smtp --verbose
+mail_last protocol mechanism user result > "$OUT/smtpx.mail"
+check "smtp-check: STARTTLS (port not 465), EHLO [127.0.0.1], XOAUTH2, QUIT" sh -c "[ \"\$(cat '$OUT/smtpx.status')\" = 0 ] &&
+	grep -q -x 'server: 127.0.0.1:$SMTPPORT (SMTP, STARTTLS)' '$OUT/smtpx.out' &&
+	grep -q -x 'authenticated: yes (235 2.7.0 Accepted)' '$OUT/smtpx.out' &&
+	grep -q -x 'logged out: 221 2.0.0 closing connection' '$OUT/smtpx.out' &&
+	[ \"\$(grep -c '^> EHLO \[127.0.0.1\]\$' '$OUT/smtpx.err')\" = 2 ] &&
+	grep -q '^> AUTH XOAUTH2 <redacted' '$OUT/smtpx.err' && ! grep -q S3CR3T '$OUT/smtpx.out' '$OUT/smtpx.err' &&
+	[ \"\$(cat '$OUT/smtpx.mail')\" = 'smtp XOAUTH2 user@example.org accepted' ] && grep -q '\"command\": \"QUIT\"' '$MLOG'"
+mailcheck smtpb smtp --mechanism OAUTHBEARER
+mail_last mechanism result pairs > "$OUT/smtpb.mail"
+check "smtp-check OAUTHBEARER: host and port sent" sh -c "[ \"\$(cat '$OUT/smtpb.status')\" = 0 ] &&
+	[ \"\$(cat '$OUT/smtpb.mail')\" = \"OAUTHBEARER accepted {'host': '127.0.0.1', 'port': '$SMTPPORT'}\" ]"
+mailcheck imapbad imap --bad-token --mechanism OAUTHBEARER
+mail_last result reply_to_challenge > "$OUT/imapbad.mail"
+check "imap-check --bad-token OAUTHBEARER: challenge decoded, AQ== sent, NO shown" sh -c "[ \"\$(cat '$OUT/imapbad.status')\" = 1 ] &&
+	grep -q -x 'access token: invalid-token-for-the-check (--bad-token)' '$OUT/imapbad.out' &&
+	grep -q -x '    error challenge: status invalid_token (the access token is invalid or expired), scope https://mail.example/, schemes bearer' '$OUT/imapbad.err' &&
+	grep -q -x '    server: A002 NO \[AUTHENTICATIONFAILED\] Invalid credentials (Failure)' '$OUT/imapbad.err' &&
+	[ \"\$(cat '$OUT/imapbad.mail')\" = 'refused AQ==' ]"
+mailcheck imapbadx imap --bad-token
+check "imap-check --bad-token XOAUTH2: challenge decoded, libcurl's early close said" sh -c "[ \"\$(cat '$OUT/imapbadx.status')\" = 1 ] &&
+	grep -q '^    error challenge: status invalid_token' '$OUT/imapbadx.err' &&
+	grep -q -x '    server: no final reply (libcurl closed the connection after the challenge)' '$OUT/imapbadx.err'"
+mailcheck smtpbad smtp --bad-token --mechanism OAUTHBEARER
+check "smtp-check --bad-token OAUTHBEARER: 535 shown" sh -c "[ \"\$(cat '$OUT/smtpbad.status')\" = 1 ] &&
+	grep -q '^    error challenge: status invalid_token' '$OUT/smtpbad.err' &&
+	grep -q -x '    server: 535 5.7.8 Learn more at https://mock.example/oauth' '$OUT/smtpbad.err'"
+run mailnoserver none bin-none imap-check --token-file "$OUT/other.json" user@example.org
+check "imap-check: no known server for the provider: exit 2" sh -c "[ \"\$(cat '$OUT/mailnoserver.status')\" = 2 ] &&
+	grep -q 'no known IMAP server for mock: name it with --server' '$OUT/mailnoserver.err'"
+run mailbadserver none bin-none smtp-check --token-file "$OUT/other.json" --server 127.0.0.1:0 user@example.org
+run mailbadmech none bin-none smtp-check --mechanism PLAIN user@example.org
+check "imap-check: a wrong --server or --mechanism: exit 2" sh -c "[ \"\$(cat '$OUT/mailbadserver.status')\" = 2 ] &&
+	grep -q -- '--server needs HOST or HOST:PORT' '$OUT/mailbadserver.err' && [ \"\$(cat '$OUT/mailbadmech.status')\" = 2 ] &&
+	grep -q -- '--mechanism needs XOAUTH2 or OAUTHBEARER' '$OUT/mailbadmech.err'"
 
 echo
 if [ $failed -ne 0 ]; then

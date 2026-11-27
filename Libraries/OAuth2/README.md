@@ -26,7 +26,7 @@ of the repository.
 | `tests/unit.cpp` | offline unit tests (`oauth2-unit`) |
 | `tests/token-*` | token client tests: mock token endpoint (`token-server.py`), driver (`oauth2-token-driver`), script (`token-tests.sh`) |
 | `tests/listener-*` | loopback listener tests: driver (`oauth2-listener-driver`), script with curl as the browser (`listener-tests.sh`) |
-| `tests/login-tests.sh`, `tests/fake-browser.py` | `oauth2-tool login`, `device` and `refresh` against the mock token endpoint over TLS, with a fake xdg-open and browser; device code scenarios chosen by the tenant |
+| `tests/login-tests.sh`, `tests/fake-browser.py`, `tests/mail-server.py` | `oauth2-tool login`, `device`, `refresh`, `imap-check` and `smtp-check` against the mock token endpoint over TLS, with a fake xdg-open and browser (device code scenarios chosen by the tenant), and mock IMAP (TLS) and SMTP (STARTTLS) servers |
 | `tests/google-error-decode.sh` | live-test helper, not run by `make check`: decodes the reason (`authError`) in the address of Google's sign-in error page |
 
 ## Interface so far
@@ -35,7 +35,7 @@ of the repository.
 |---|---|
 | `Identity.h` | `oauth2::Identity`, `IsValidIdentityId()` |
 | `Version.h` | library and libcurl versions |
-| `Encoding.h` | base64url without padding; percent and form encoding and decoding; `BuildQuery`, `BuildForm`, `ParseQuery` |
+| `Encoding.h` | base64url without padding, standard base64 (SASL); percent and form encoding and decoding; `BuildQuery`, `BuildForm`, `ParseQuery` |
 | `Random.h` | `RandomBytes()` (libsodium), `MakeState()`, `ConstantTimeEquals()` |
 | `Pkce.h` | `MakePkce()`, `PkceChallengeS256()` (RFC 7636, S256 only), `IsValidPkceVerifier()` |
 | `Redact.h` | `Redact()` ("<redacted N bytes>"), `RedactParams()` for query strings and form bodies |
@@ -50,6 +50,7 @@ of the repository.
 | `Browser.h` | `OpenBrowser()`: xdg-open, then `$BROWSER`, without a shell |
 | `IdToken.h` | `ParseIdToken()`: the claims of the ID token (e-mail address, audience), signature not checked |
 | `DeviceCode.h` | device code (RFC 8628): `RequestDeviceAuthorization()`, `WaitForDeviceToken()`, `PollDeviceToken()`, `IsUnknownClient()` |
+| `Sasl.h` | `XOAuth2Response()`, `OAuthBearerResponse()` (RFC 7628), `SaslErrorReply()`, `ParseSaslErrorChallenge()` |
 
 ## Provider configuration files
 
@@ -243,6 +244,30 @@ Microsoft needs "Allow public client flows" in the app registration for the
 device code (`docs/oauth2/register-microsoft.md`, step 3); otherwise the
 polls fail with AADSTS7000218.
 
+## SASL for mail protocols
+
+For Mulberry's IMAP, SMTP, POP3 and ManageSieve code (stage 4); the
+responses hold the access token and are never logged:
+
+- `XOAuth2Response(user, token)`: `user=USER^Aauth=Bearer TOKEN^A^A`
+  (Google's XOAUTH2; also Microsoft and Yahoo).
+- `OAuthBearerResponse(user, host, port, token)`: RFC 7628,
+  `n,a=USER,^Ahost=HOST^Aport=PORT^Aauth=Bearer TOKEN^A^A`; the user is an
+  RFC 5801 saslname (`,` as `=2C`, `=` as `=3D`); host and port are left out
+  when empty or 0.
+- Both are refused (empty result) when a field holds a control character.
+  Encode them with `Base64Encode()` and send them as the initial response
+  (SASL-IR, SMTP `AUTH M IR`) or after the server's empty challenge.
+- A refused token brings an error challenge first (IMAP `+ BASE64`, SMTP
+  `334 BASE64`): `ParseSaslErrorChallenge()` reads its JSON (`status`,
+  `schemes`, `scope`, `openid-configuration`), then the client sends
+  `SaslErrorReply()` (OAUTHBEARER `^A`, "AQ==" once encoded; XOAUTH2 an
+  empty line, as Google asks) and gets the final failure (IMAP `NO`, SMTP
+  `535`).
+
+The unit tests compare the responses with RFC 7628's and Google's examples
+byte for byte.
+
 ## oauth2-tool
 
 ```sh
@@ -251,6 +276,8 @@ oauth2-tool [options] lookup NAME      # provider of a server name or e-mail add
 oauth2-tool [options] login ACCOUNT    # sign in in the browser, keep the refresh token
 oauth2-tool [options] device ACCOUNT   # sign in on another device with a code (Microsoft)
 oauth2-tool [options] refresh ACCOUNT  # new access token from the kept refresh token
+oauth2-tool [options] imap-check ACCOUNT  # refresh, then authenticate to IMAP and log out
+oauth2-tool [options] smtp-check ACCOUNT  # the same with SMTP
 oauth2-tool --version
 ```
 
@@ -272,7 +299,25 @@ until the code expires), `--token-file FILE`,
 
 `login` prints the token type, expiry, requested, granted and refused
 scopes, and the address of the ID token; `device` prints the code and URL to
-use on the other device, then the same. The refresh token goes to
+use on the other device, then the same.
+
+`imap-check` and `smtp-check` refresh the token as `refresh` does, then open
+a libcurl session that only authenticates and logs out (`LOGOUT`, `QUIT`),
+independently of Mulberry's protocol code. Options: `--server HOST[:PORT]`
+(default for Google, Microsoft and Yahoo: their usual servers; Microsoft
+365 SMTP: `--server smtp.office365.com:587`), `--tls` or `--starttls`
+(default: TLS from the start on ports 993 and 465, STARTTLS otherwise; never
+without TLS), `--mechanism XOAUTH2|OAUTHBEARER` (default: the provider's
+first `sasl` entry), `--bad-token` (an invalid token, no refresh: shows the
+server's decoded error challenge), `--verbose` (the session, with the
+SASL response redacted). For Microsoft, the IMAP check also prints the
+front-end server named in the greeting (base64 of UTF-16 after
+`BACKENDAUTHENTICATE`): some front ends answer a valid token with "NO User
+is authenticated but not connected.", and a new connection usually reaches
+another one (task 1.8 notes in the plan). SMTP's `EHLO` names `[127.0.0.1]`, not the
+computer. libcurl answers an error challenge for OAUTHBEARER only (with
+`AQ==`); after an XOAUTH2 challenge it closes the connection, so the server's
+final line is not shown. The refresh token goes to
 `~/.config/<app>/oauth2-tool/PROVIDER-ACCOUNT.json` (folder 0700, file
 0600, written through a temporary file), for this tool only: Mulberry keeps
 its tokens in the keyring. `refresh` refuses a file issued to another client
@@ -291,8 +336,9 @@ gmake -C Libraries/OAuth2 check    # unit and mock-server tests, no network, no 
 Libraries/OAuth2/oauth2-tool --version
 ```
 
-`check` needs Python 3 for the mock token endpoint (127.0.0.1 only),
-`openssl` for its TLS cases (skipped without it: the TLS case of the token
-tests, and the login tests), and curl for the listener tests; their details
+`check` needs Python 3 for the mock token endpoint and mail servers
+(127.0.0.1 only), `openssl` for their TLS cases (skipped without it: the TLS
+case of the token tests, and the login tests), libcurl with IMAP and SMTP
+(the mail checks), and curl for the listener tests; their details
 are in `obj/tests/token/`, `obj/tests/listener/` and `obj/tests/login/`. `oauth2-tool` and the test programs stay in
 the build tree; they are not installed (decision D7 of the plan).

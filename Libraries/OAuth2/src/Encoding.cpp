@@ -152,6 +152,44 @@ bool Base64UrlDecode(const std::string& text, std::string& out)
 	return true;
 }
 
+std::string Base64Encode(const std::string& data)
+{
+	std::string result = Base64UrlEncode(data);
+	for (char& c : result)
+	{
+		if (c == '-')
+			c = '+';
+		else if (c == '_')
+			c = '/';
+	}
+	result.append((4 - result.size() % 4) % 4, '=');
+	return result;
+}
+
+bool Base64Decode(const std::string& text, std::string& out)
+{
+	std::string body = text;
+	if (body.size() % 4 == 0 && !body.empty())
+	{
+		// At most two '=', only at the end
+		size_t padding = 0;
+		while (padding < 2 && body[body.size() - 1 - padding] == '=')
+			++padding;
+		body.resize(body.size() - padding);
+	}
+	for (char& c : body)
+	{
+		if (c == '-' || c == '_')
+			return false;
+		if (c == '+')
+			c = '-';
+		else if (c == '/')
+			c = '_';
+	}
+	// '=' left in the middle is refused here
+	return Base64UrlDecode(body, out);
+}
+
 std::string PercentEncode(const std::string& data)
 {
 	return Encode(data, false);

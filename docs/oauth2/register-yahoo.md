@@ -20,15 +20,30 @@ Yahoo's OAuth2 for **mail** is **not self-service**:
   available for self-served setup in the developer console". Yahoo grants them
   only after a **commercial access** application, with a signed agreement
   ([Yahoo developer access](https://senders.yahooinc.com/developer/developer-access/)).
-- No timeline or criteria are published. Approval for a personal or
-  open-source test project is **unknown and unlikely** (**unverified**).
+- No timeline or criteria are published, and the page names no exception
+  for personal, open-source or non-commercial projects (checked
+  2026-11-27).
+- Approval **is possible for an open-source desktop client**: Evolution got
+  it in 2021 (see "How other clients access Yahoo Mail"). Whether Yahoo
+  still approves new applications is unknown: a 2021 Evolution mailing-list
+  post already reported that the developer console no longer offered the
+  mail scope (**unverified**).
 
-**Thunderbird is not a counter-example.** A Yahoo account can use OAuth2 in
-Thunderbird because Mozilla is an approved Yahoo partner. Its client ID is
-Yahoo-approved, and its redirect (`net.thunderbird://oauth/yahoo`) was set by
-Yahoo. Mozilla's source says "Don't copy these values for your own
-application". Using them in another client would break Yahoo's terms, and the
-redirect could only be received by Thunderbird.
+### How other clients access Yahoo Mail
+
+Checked 2026-11-27. Each client with OAuth2 for Yahoo uses **its own
+registration**; none can be reused by Mulberry, whose approval would belong
+to its own registered application (under the fork's final name).
+
+| Client | Yahoo access | Source |
+|---|---|---|
+| **Thunderbird** | OAuth2. Mozilla is an approved Yahoo partner; its client ID is Yahoo-approved and its redirect (`net.thunderbird://oauth/yahoo`) was set by Yahoo. Mozilla's source says "Don't copy these values for your own application": using them elsewhere would break Yahoo's terms, and only Thunderbird can receive the redirect | [Mozilla: OAuth2 for Yahoo, AOL and ATT](https://support.mozilla.org/kb/thunderbird-and-yahoo) |
+| **Evolution** | OAuth2, scopes `mail-w ycal-w sdct-w` (mail, calendar, contacts). Its maintainer wrote in March 2021: "I received an approval for the Yahoo! OAuth2 application from the Verizon Media". The client ID and secret are built into evolution-data-server (`WITH_YAHOO_CLIENT_ID`, `WITH_YAHOO_CLIENT_SECRET`, with upstream defaults); users can override them with the GSettings keys `oauth2-yahoo-client-id` and `oauth2-yahoo-client-secret`. Which scopes the approval covered is not stated | [issue #317](https://gitlab.gnome.org/GNOME/evolution-data-server/-/issues/317), [commit](https://mail.gnome.org/archives/commits-list/2021-March/msg09459.html) |
+| **Alpine** | XOAUTH2 or OAUTHBEARER since version 2.24, signed in through the browser. Its help says "Alpine is only registered with all the providers listed in this page", so the client ID is the Alpine maintainer's, shipped with Alpine (**unverified**: the page names neither the client ID nor an approval). For Gmail, by contrast, each Alpine user registers their own client | [Alpine help: XOAUTH2](https://alpineapp.email/alpine/alpine-info/misc/xoauth2.html) |
+| **KMail** | No OAuth2 for Yahoo: Akonadi's OAuth2 covers Gmail only (adding a Yahoo account even opened a Google sign-in page). Users sign in with plain-text authentication and a Yahoo **app password**, as section A here | KDE bugs [444301](https://bugs.kde.org/show_bug.cgi?id=444301), [455113](https://bugs.kde.org/show_bug.cgi?id=455113), [462042](https://bugs.kde.org/show_bug.cgi?id=462042) (duplicate of 457233, status not checked) |
+
+Until Yahoo approves Mulberry's own application, Mulberry does as KMail does
+(plan branch 7.2).
 
 So, for the free personal Yahoo account (Y):
 

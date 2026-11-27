@@ -35,6 +35,15 @@ std::string Base64UrlEncode(const std::string& data);
 // bits of the last character are not zero.
 bool Base64UrlDecode(const std::string& text, std::string& out);
 
+// Standard base64 (RFC 4648 section 4) with '=' padding, as SASL uses it
+std::string Base64Encode(const std::string& data);
+
+// Decodes standard base64, with or without its '=' padding.  False, with
+// out unchanged, on any character outside A-Z a-z 0-9 '+' '/' (spaces and
+// line breaks included), on padding anywhere but at the end, on an
+// impossible length, or when the unused bits are not zero.
+bool Base64Decode(const std::string& text, std::string& out);
+
 // Percent-encoding for URL query components: every byte except the RFC 3986
 // unreserved characters (A-Z a-z 0-9 '-' '.' '_' '~') becomes %XX (upper
 // case hexadecimal); a space becomes %20
