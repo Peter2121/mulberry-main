@@ -1,6 +1,7 @@
 # Mulberry GUI toolkit: analysis and options
 
-*Written 2026-11-19, based on the `freebsd-build` branch of the Mulberry repository.*
+*Written 2026-11-19, based on the `freebsd-build` branch of the Mulberry repository.
+Section 11 (build system) added 2026-11-27.*
 
 ## 1. Summary
 
@@ -24,6 +25,10 @@ Options examined: **JX 4.2** (current upstream), **EFL**, **FLTK 1.4**,
 - **HTML mail display:** litehtml rather than Qt WebEngine, with either
   toolkit. Measured: 25–47 MB versus 225–243 MB for the same mails, and 1.3 MB
   of code versus a 209 MB library (section 9).
+- **Build system:** move from autoconf and hand-written makefiles to **CMake**
+  as part of this migration, with either toolkit. JX and ACE keep their own
+  makefiles, called from CMake, until they are retired: their build is never
+  ported (section 11).
 
 All effort figures in this document are rough estimates for one experienced
 developer, with low confidence. A 1–2 week prototype would turn them into
@@ -627,12 +632,16 @@ roughly its private 44–63 MB: still about 6× litehtml's.
 ## 10. Proposed plan (Qt)
 
 0. **Preparation, independent of any toolkit (weeks):**
+   - a CMake build next to autoconf (section 11, steps B1 and B2): the
+     libraries, plug-ins and the JX application, with JX and ACE built by their
+     own makefiles;
    - replace ACE in `Sources_Common` (13 files, threads and mutexes only) with
      `std::thread`/`std::mutex`;
    - separate "operating system" from "UI toolkit" in the 1,929 platform `#if`
      conditions (today `__linux_os` means both "Unix" and "JX");
    - split the 16 shared files that include toolkit headers.
-1. **Qt skeleton** in a new `Qt/` directory next to `Linux/` (JX stays buildable):
+1. **Qt skeleton** in a new `Qt/` directory next to `Linux/` (JX stays buildable),
+   built by CMake only:
    - reimplement the Mulberry base classes (`CDialogDirector`, `CTable`,
      `CTextDisplay`, `CToolbar`, `CCommander`) on Qt;
    - build a read-only three-pane window (accounts, mailbox list, message view)
@@ -643,8 +652,9 @@ roughly its private 44–63 MB: still about 6× litehtml's.
 3. **Dialogs:** a converter from `.fd` to Qt Designer `.ui` for the 208 layout
    files (fixed positions first, layouts gradually); then Preferences, Rules,
    Search, Address book, Calendar (custom-drawn with `QPainter`).
-4. **Retire JX, ACE and `Linux/`.** Later, macOS and Windows builds from `Qt/`,
-   and removal of `MacOS/` and `Win32/`.
+4. **Retire JX, ACE and `Linux/`,** with their makefiles and the remaining
+   autoconf files (section 11, step B4). Later, macOS and Windows builds from
+   `Qt/` with CMake, and removal of `MacOS/` and `Win32/`.
 
 **First step:** a 1–2 week trial covering the ACE removal, a Qt skeleton
 showing the mailbox list from a real IMAP account, and a prototype `.fd` →
@@ -653,7 +663,95 @@ showing the mailbox list from a real IMAP account, and a prototype `.fd` →
 If FLTK is chosen instead, the same steps 0 and 1 apply, with a `.fd` → `.fl`
 converter in step 3 and the rich-text path of section 7.
 
-## 11. Sources
+## 11. Build system: CMake, introduced with the migration
+
+Decided 2026-11-27: the build moves to CMake as part of the toolkit
+migration, so that the build of JX and ACE never has to be ported.
+
+### Current build (measured)
+
+- **autoconf:** `configure.in` (660 lines, 18 options: HTML viewer, shared
+  libraries, application identity, OpenSSL, Kerberos, LDAP, aspell, libxml2,
+  folders) generates about 30 GNU makefiles.
+- **Hand-written makefiles:** `Linux/Makefile.in` (1,004 lines) lists about
+  900 object files by hand and tracks header dependencies with its own `.dd`
+  rules.
+
+| Part | Size | Built with today |
+|---|---|---|
+| Application (`Linux/` + `Sources_Common/`) | ~850 source files | `Linux/Makefile.in` |
+| Plug-ins (about 20 shared modules) | ~100 files | one makefile each |
+| CICalendar, vCard, XMLLib, OAuth2, HTMLView | ~120 files | small makefiles |
+| **JX** (libjcore, libjx) and **ACE 5.4.7** | ~500 and ~400 files | their own 2005-era systems (`makemake`, ACE's platform makefiles), plus symbolic-link steps in `Libraries/Makefile.in` |
+| pixman, cairo, harfbuzz (HTML viewer) | submodules | **Meson**, driven from make |
+| litehtml (HTML viewer) | submodule | **CMake**, driven from make |
+| `Win32/`, `MacOS/` | ~950 files | their own projects, not part of this build |
+
+### Effort of a move to CMake
+
+- **Mechanical:**
+  - the five small libraries, the plug-ins and the application (a script can
+    convert the makefile lists);
+  - the configure checks (OpenSSL, curl, libsodium, X11, fontconfig,
+    freetype, aspell, Kerberos, LDAP) → `find_package` and `pkg-config`;
+  - the 18 options → CMake options;
+  - the test scripts of OAuth2 and HTMLView → CTest;
+  - the generated `xpms.res`;
+  - the install rules.
+- **Medium:**
+  - the HTML viewer's libraries, still built as external projects;
+  - packaging: `debian/rules`, `Build/mulberry.spec` and a future FreeBSD
+    port (all support CMake);
+  - the FreeBSD details already handled (`libdata/pkgconfig`, the compiler's
+    language-standard flag).
+- **Hard, and avoided: JX and ACE.** A native port means about 900 files of
+  old code with their own configuration machinery, and both disappear with
+  the new toolkit. Until then CMake runs their existing makefiles, as make does
+  today for the HTML viewer's libraries.
+- **Rough effort:** 1–2 weeks with JX and ACE called through their makefiles;
+  another 1–2 weeks would have been needed to port them, which this plan
+  avoids. Main risks: small differences in compile and link flags, and the
+  packaging.
+- **Gains:** builds outside the source tree, Ninja parallel builds, reliable
+  header dependencies, `compile_commands.json` for editors (clangd, VS Code),
+  CTest, and later the same build for Windows and macOS.
+
+### CMake or Meson
+
+| | CMake | Meson |
+|---|---|---|
+| Qt 6 | Qt's recommended build system; automatic `moc`, `uic`, `rcc` | supported through its Qt module, with less documentation and tooling |
+| FLTK 1.4 / 1.5 | FLTK builds with CMake, 1.5 will be CMake-only; a bundled FLTK is one `add_subdirectory()`; `fltk_wrap_ui()` for FLUID files | no Meson build in FLTK: its CMake package, or bundled through Meson's CMake-subproject support; FLUID files need a hand-written rule |
+| Bundled libraries | litehtml is CMake; cairo and pixman are Meson-only, built as external projects | pixman, cairo and harfbuzz fit directly as subprojects; litehtml through the CMake-subproject support |
+| JX and ACE makefiles, until retired | easy (external project) | possible, but stiffer |
+| Language, speed | clumsier, known everywhere | cleaner and faster; needs Python and Ninja (already needed for the HTML viewer) |
+| Editors, CI, packaging | best supported | good, less common |
+| Windows, macOS later | Visual Studio and Xcode generators | Ninja; Visual Studio generator |
+
+**Conclusion:** CMake with either toolkit; clearly with Qt 6, and also with
+FLTK, which is itself CMake-native. Meson's only real advantage here is the
+three Meson-built HTML libraries; it would only be worth it if JX stayed for
+good, which section 8 advises against.
+
+### Steps (alongside section 10)
+
+- **B1 (with plan step 0):** a top-level `CMakeLists.txt` building the five
+  small libraries and the plug-ins, with their tests in CTest. autoconf stays
+  the reference build.
+- **B2 (with plan step 0):** the JX application (`Linux/`) with CMake. JX and
+  ACE, and the HTML viewer's libraries, are built by their own systems as
+  external projects. The two builds run in parallel until they give the same
+  results: the same programs and plug-ins, the same tests passing, the same
+  installed files.
+- **B3 (with plan step 1):** the new toolkit layer (`Qt/`, or `FLTK/`) is built
+  by CMake only: Qt through `find_package(Qt6)`; FLTK 1.4 as a submodule through
+  `add_subdirectory()` (system packages vary: FreeBSD has 1.4.5, the
+  development machine has 1.3.10 installed).
+- **B4 (with plan step 4):** with JX retired, remove the JX and ACE external
+  projects, the makefiles and `configure.in`; packaging builds with CMake
+  only. The build of JX and ACE is never ported.
+
+## 12. Sources
 
 - [JX Application Framework (GitHub)](https://github.com/jafl/jx_application_framework), [libjx on SourceForge (licence)](https://sourceforge.net/projects/libjx/)
 - [Qt 6.12 LTS released (Phoronix)](https://www.phoronix.com/news/Qt-6.12-LTS-Released), [FreshPorts devel/qt6](https://www.freshports.org/devel/qt6/)
@@ -669,3 +767,9 @@ converter in step 3 and the rich-text path of section 7.
   Cairo+Pango container, Qt WebEngine 6.11.2 from FreeBSD packages.
 - Verified locally (section 7, option G): `Fl_Help_View` source of FLTK 1.4.5
   (tag `release-1.4.5`) and of the 1.5 development branch (commit `a28e392`).
+- Build system (section 11): [Qt 6: Build with CMake](https://doc.qt.io/qt-6/cmake-manual.html),
+  [Meson Qt 6 module](https://mesonbuild.com/Qt6-module.html),
+  [Meson CMake module](https://mesonbuild.com/CMake-module.html),
+  [CMake FindFLTK (`fltk_wrap_ui`)](https://cmake.org/cmake/help/latest/module/FindFLTK.html);
+  measured locally: `configure.in`, the makefiles and the source counts of the
+  repository (2026-11-27).
